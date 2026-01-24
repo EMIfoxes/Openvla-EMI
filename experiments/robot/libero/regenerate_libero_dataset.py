@@ -20,7 +20,25 @@ Usage:
             --libero_task_suite libero_spatial \
             --libero_raw_data_dir ./LIBERO/libero/datasets/libero_spatial \
             --libero_target_dir ./LIBERO/libero/datasets/libero_spatial_no_noops
-
+            
+重新生成 LIBERO 数据集（HDF5 文件）的方法是在环境中回放演示数据。
+注意事项：
+我们将图像观测保存为 256×256 像素的分辨率（而非 128×128）。
+我们会过滤掉包含“无操作”（零）动作且未改变机器人状态的转移。
+我们会过滤掉不成功的演示。
+在将 LIBERO HDF5 数据转换为 RLDS 数据时（此处未展示），我们会将图像旋转 180 度，因为我们观察到在我们的平台上，环境返回的图像是上下颠倒的。
+用法：
+复制
+python experiments/robot/libero/regenerate_libero_dataset.py \
+    --libero_task_suite [ libero_spatial | libero_object | libero_goal | libero_10 ] \
+    --libero_raw_data_dir <原始 HDF5 数据集目录路径> \
+    --libero_target_dir <目标目录路径>
+示例（LIBERO-Spatial）：
+复制
+python experiments/robot/libero/regenerate_libero_dataset.py \
+    --libero_task_suite libero_spatial \
+    --libero_raw_data_dir ./LIBERO/libero/datasets/libero_spatial \
+    --libero_target_dir ./LIBERO/libero/datasets/libero_spatial_no_noops
 """
 
 import argparse
