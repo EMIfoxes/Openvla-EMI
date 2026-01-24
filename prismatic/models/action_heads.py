@@ -122,10 +122,7 @@ class NoisePredictionModel(nn.Module):
             output_dim=action_dim,
         )
 
-    def forward(
-        self,
-        obs,
-    ):
+    def forward(self, obs,):
         # obs: observation embeddings to condition the generation on
         # - shape: (batch_size, chunk_len, rearranged_hidden_dim=action_dim*hidden_dim)
         #
@@ -151,9 +148,7 @@ class DiffusionActionHead(nn.Module):
     ):
         super().__init__()
         self.action_dim = action_dim
-        self.noise_predictor = NoisePredictionModel(
-            transformer_hidden_dim=hidden_dim*ACTION_DIM, hidden_dim=hidden_dim, action_dim=action_dim
-        )
+        self.noise_predictor = NoisePredictionModel(transformer_hidden_dim=hidden_dim*ACTION_DIM, hidden_dim=hidden_dim, action_dim=action_dim)
         self.num_diffusion_steps_train = num_diffusion_steps_train
         self.noise_scheduler = DDIMScheduler(num_train_timesteps=num_diffusion_steps_train, beta_schedule="squaredcos_cap_v2")
         self.time_encoder = SinusoidalPositionalEncoding(dim=hidden_dim)
@@ -171,9 +166,7 @@ class DiffusionActionHead(nn.Module):
         # Sample random noise with shape equal to actions, used for closed-form forward diffusion.
         noise = torch.randn(size=(batch_size, NUM_ACTIONS_CHUNK, ACTION_DIM), device=device, dtype=ground_truth_actions.dtype)  # (B, chunk_len, action_dim)
         # Sample random diffusion timesteps (one for each action in batch).
-        timesteps = torch.randint(
-            low=0, high=self.noise_scheduler.config.num_train_timesteps, size=(batch_size,), device=device
-        )
+        timesteps = torch.randint(low=0, high=self.noise_scheduler.config.num_train_timesteps, size=(batch_size,), device=device)
         # Add noise to clean actions according to the magnitude at each diffusion timestep via
         # closed-form forward diffusion.
         noisy_actions = self.noise_scheduler.add_noise(ground_truth_actions, noise, timesteps)  # (B, chunk_len, action_dim)

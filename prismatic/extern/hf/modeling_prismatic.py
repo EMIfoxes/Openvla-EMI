@@ -356,9 +356,7 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
         )
 
         # Instantiate LLM Backbone
-        self.language_model = AutoModelForCausalLM.from_config(
-            config.text_config, attn_implementation=config._attn_implementation
-        )
+        self.language_model = AutoModelForCausalLM.from_config(config.text_config, attn_implementation=config._attn_implementation)
         self.vocab_size = config.text_config.vocab_size
         self.pad_token_id = config.pad_token_id
         self.llm_dim = config.text_config.hidden_size
@@ -525,9 +523,7 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
     ) -> Union[Tuple, PrismaticCausalLMOutputWithPast]:
         """Run a forward pass through the VLM, returning a PrismaticCausalLMOutputWithPast instance."""
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_hidden_states = (output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states)
         output_projector_features = output_projector_features if output_projector_features is not None else False
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 

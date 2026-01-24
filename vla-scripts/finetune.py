@@ -1,8 +1,4 @@
-"""
-finetune.py
-
-Fine-tunes OpenVLA via LoRA.
-"""
+"""finetune.py Fine-tunes OpenVLA via LoRA."""
 
 import os
 import time
@@ -16,6 +12,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import tqdm
+import wandb
 from accelerate import PartialState
 from huggingface_hub import HfApi, snapshot_download
 from peft import LoraConfig, PeftModel, get_peft_model
@@ -25,9 +22,6 @@ from torch.optim.lr_scheduler import MultiStepLR
 from torch.utils.data import DataLoader
 from transformers import AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor
 from transformers.modeling_outputs import CausalLMOutputWithPast
-
-import wandb
-
 from experiments.robot.openvla_utils import check_model_logic_mismatch, model_is_on_hf_hub,update_auto_map
 from prismatic.extern.hf.configuration_prismatic import OpenVLAConfig
 from prismatic.extern.hf.modeling_prismatic import OpenVLAForActionPrediction
@@ -45,7 +39,6 @@ from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
 
 # Sane Defaults
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
 
 @dataclass
 class FinetuneConfig:
@@ -101,7 +94,6 @@ class FinetuneConfig:
 
     # fmt: on
 
-
 def remove_ddp_in_checkpoint(state_dict) -> dict:
     """
     Removes the 'module.' prefix from parameter names in a PyTorch model state dictionary that was saved using
@@ -125,7 +117,6 @@ def remove_ddp_in_checkpoint(state_dict) -> dict:
         else:
             new_state_dict[k] = v
     return new_state_dict
-
 
 def get_run_id(cfg) -> str:
     """
@@ -160,7 +151,6 @@ def get_run_id(cfg) -> str:
             run_id += f"--{cfg.run_id_note}"
     return run_id
 
-
 def load_checkpoint(module_name: str, path: str, step: int, device: str = "cpu") -> dict:
     """
     Loads a checkpoint for a given module.
@@ -179,7 +169,6 @@ def load_checkpoint(module_name: str, path: str, step: int, device: str = "cpu")
     state_dict = torch.load(checkpoint_path, weights_only=True, map_location=device)
     return remove_ddp_in_checkpoint(state_dict)
 
-
 def wrap_ddp(module: nn.Module, device_id: int, find_unused: bool = False) -> DDP:
     """
     Wrap a module with DistributedDataParallel.
@@ -194,7 +183,6 @@ def wrap_ddp(module: nn.Module, device_id: int, find_unused: bool = False) -> DD
     """
     return DDP(module, device_ids=[device_id], find_unused_parameters=find_unused, gradient_as_bucket_view=True)
 
-
 def count_parameters(module: nn.Module, name: str) -> None:
     """
     Counts and prints the number of trainable parameters in a module.
@@ -208,7 +196,6 @@ def count_parameters(module: nn.Module, name: str) -> None:
     """
     num_params = sum(p.numel() for p in module.parameters() if p.requires_grad)
     print(f"# trainable params in {name}: {num_params}")
-
 
 def init_module(
     module_class: Type[nn.Module],
@@ -246,7 +233,6 @@ def init_module(
     module = module.to(device_id)
 
     return wrap_ddp(module, device_id, find_unused_params)
-
 
 def run_forward_pass(
     vla,
@@ -414,7 +400,6 @@ def run_forward_pass(
     # Return both the loss tensor (with gradients) and the metrics dictionary (with detached values)
     return loss, metrics
 
-
 def run_diffusion_sampling(
     vla,
     action_head,
@@ -503,7 +488,6 @@ def run_diffusion_sampling(
 
     return curr_noisy_actions.reshape(actions_shape)
 
-
 def compute_smoothened_metrics(metrics_deques) -> dict:
     """
     Compute smoothened metrics from recent deques.
@@ -519,7 +503,6 @@ def compute_smoothened_metrics(metrics_deques) -> dict:
         if deque and len(deque) > 0:
             smoothened_metrics[name] = sum(deque) / len(deque)
     return smoothened_metrics
-
 
 def log_metrics_to_wandb(metrics, prefix, step, wandb_entity) -> None:
     """
@@ -543,7 +526,6 @@ def log_metrics_to_wandb(metrics, prefix, step, wandb_entity) -> None:
         else:
             log_dict[f"{prefix}/{name.replace('_', ' ').title()}"] = value
     wandb_entity.log(log_dict, step=step)
-
 
 def save_training_checkpoint(
     cfg,
@@ -638,7 +620,6 @@ def save_training_checkpoint(
         # Wait for merged model to be saved
         dist.barrier()
 
-
 def run_validation(
     vla,
     action_head,
@@ -722,7 +703,6 @@ def run_validation(
     # Log validation metrics to W&B
     if distributed_state.is_main_process:
         log_metrics_to_wandb(avg_val_metrics, "VLA Val", log_step, wandb)
-
 
 @draccus.wrap()
 def finetune(cfg: FinetuneConfig) -> None:
@@ -826,12 +806,10 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     # Load processor and VLA
     processor = AutoProcessor.from_pretrained(cfg.vla_path, trust_remote_code=True)
-    vla = AutoModelForVision2Seq.from_pretrained(
-        cfg.vla_path,
-        torch_dtype=torch.bfloat16,
-        low_cpu_mem_usage=True,
-        trust_remote_code=True,
-    ).to(device_id)
+    vla = AutoModelForVision2Seq.from_pretrained(cfg.vla_path,
+                                                 torch_dtype=torch.bfloat16,
+                                                 low_cpu_mem_usage=True,
+                                                 trust_remote_code=True,).to(device_id)
 
     # Set number of images in VLA input
     vla.vision_backbone.set_num_images_in_input(cfg.num_images_in_input)
@@ -858,10 +836,7 @@ def finetune(cfg: FinetuneConfig) -> None:
         # 使用 FiLM 包装器包装视觉主干网络
         # 注意：为此，必须指定 `vla.model.vision_backbone`，而不是仅仅指定 `vla.vision_backbone`，
         # 因为后者会导致新包装的主干网络被保存为 `vla` 的一个新属性，而不是覆盖原始主干网络（这是由于 LoRA 包装器的原因）
-        vla.model.vision_backbone = FiLMedPrismaticVisionBackbone(
-            vision_backbone=vla.model.vision_backbone,
-            llm_dim=vla.llm_dim,
-        )
+        vla.model.vision_backbone = FiLMedPrismaticVisionBackbone(vision_backbone=vla.model.vision_backbone,llm_dim=vla.llm_dim,)
         count_parameters(vla.vision_backbone, "vla.vision_backbone (post-wrap)")
         if cfg.resume:
             state_dict = load_checkpoint("vision_backbone", cfg.vla_path, cfg.resume_step)
@@ -907,9 +882,7 @@ def finetune(cfg: FinetuneConfig) -> None:
             },
             to_bf16=True,
         )
-        noisy_action_projector = init_module(
-            NoisyActionProjector, "noisy_action_projector", cfg, device_id, {"llm_dim": vla.module.llm_dim}
-        )
+        noisy_action_projector = init_module(NoisyActionProjector, "noisy_action_projector", cfg, device_id, {"llm_dim": vla.module.llm_dim})
 
     # 获取视觉块的数量 Get number of vision patches
     NUM_PATCHES = vla.module.vision_backbone.get_num_patches() * vla.module.vision_backbone.get_num_images_in_input()
@@ -1021,8 +994,7 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     # 创建数据整理器和数据加载器
     # Create collator and dataloader
-    collator = PaddedCollatorForActionPrediction(
-        processor.tokenizer.model_max_length, processor.tokenizer.pad_token_id, padding_side="right" )
+    collator = PaddedCollatorForActionPrediction(processor.tokenizer.model_max_length, processor.tokenizer.pad_token_id, padding_side="right" )
    
     dataloader = DataLoader(
         train_dataset,
@@ -1159,7 +1131,6 @@ def finetune(cfg: FinetuneConfig) -> None:
             if log_step == cfg.max_steps:
                 print(f"Max step {cfg.max_steps} reached! Stopping training...")
                 break
-
 
 if __name__ == "__main__":
     finetune()
