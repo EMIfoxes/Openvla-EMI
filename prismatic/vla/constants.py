@@ -3,17 +3,23 @@ Important constants for VLA training and evaluation.
 
 Attempts to automatically identify the correct constants to set based on the Python command used to launch
 training or evaluation. If it is unclear, defaults to using the LIBERO simulation benchmark constants.
+
+VLA训练和评估的重要常量。
+
+尝试根据用于启动训练或评估的Python命令自动识别要设置的正确常量。如果无法明确识别,则默认使用LIBERO仿真基准的常量。
+
 """
 import sys
 from enum import Enum
 
-# Llama 2 token constants
+# Llama 2 token常量 Llama 2 token constants  
 IGNORE_INDEX = -100
-ACTION_TOKEN_BEGIN_IDX = 31743
+ACTION_TOKEN_BEGIN_IDX = 31743 # Llama 2 token常量 Llama 2 token constants 
+# ACTION_TOKEN_BEGIN_IDX  = 151386 # Qwen2.5-0.5B token constants
 STOP_INDEX = 2  # '</s>'
+NUM_TOKENS = 64
 
-
-# Defines supported normalization schemes for action and proprioceptive state.
+# 定义了支持的动作和本体感知状态的归一化方案。 Defines supported normalization schemes for action and proprioceptive state.
 class NormalizationType(str, Enum):
     # fmt: off
     NORMAL = "normal"               # Normalize to Mean = 0, Stdev = 1

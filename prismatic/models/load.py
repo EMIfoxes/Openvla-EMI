@@ -60,7 +60,7 @@ def load(
         overwatch.info(f"Loading from local path `{(run_dir := Path(model_id_or_path))}`")
 
         # Get paths for `config.json` and pretrained checkpoint
-        config_json, checkpoint_pt = run_dir / "config.json", run_dir / "checkpoints" / "latest-checkpoint.pt"
+        config_json, checkpoint_pt = run_dir / "config.json", run_dir / "checkpoints" / "step-020792-epoch-01-loss=0.5268.pt"  # latest-checkpoint.pt
         assert config_json.exists(), f"Missing `config.json` for `{run_dir = }`"
         assert checkpoint_pt.exists(), f"Missing checkpoint for `{run_dir = }`"
     else:
@@ -88,12 +88,9 @@ def load(
         f"             Checkpoint Path =>> [underline]`{checkpoint_pt}`[/]"
     )
 
-    # Load Vision Backbone
+    # Load Vision Backbone 加载视觉骨干网络
     overwatch.info(f"Loading Vision Backbone [bold]{model_cfg['vision_backbone_id']}[/]")
-    vision_backbone, image_transform = get_vision_backbone_and_transform(
-        model_cfg["vision_backbone_id"],
-        model_cfg["image_resize_strategy"],
-    )
+    vision_backbone, image_transform = get_vision_backbone_and_transform(model_cfg["vision_backbone_id"],model_cfg["image_resize_strategy"])
 
     # Load LLM Backbone --> note `inference_mode = True` by default when calling `load()`
     overwatch.info(f"Loading Pretrained LLM [bold]{model_cfg['llm_backbone_id']}[/] via HF Transformers")
@@ -101,9 +98,8 @@ def load(
         model_cfg["llm_backbone_id"],
         llm_max_length=model_cfg.get("llm_max_length", 2048),
         hf_token=hf_token,
-        inference_mode=not load_for_training,
-    )
-
+        inference_mode=not load_for_training)
+    
     # Load VLM using `from_pretrained` (clobbers HF syntax... eventually should reconcile)
     overwatch.info(f"Loading VLM [bold blue]{model_cfg['model_id']}[/] from Checkpoint")
     vlm = PrismaticVLM.from_pretrained(
@@ -112,9 +108,8 @@ def load(
         vision_backbone,
         llm_backbone,
         arch_specifier=model_cfg["arch_specifier"],
-        freeze_weights=not load_for_training,
-    )
-
+        freeze_weights=not load_for_training)
+    
     return vlm
 
 

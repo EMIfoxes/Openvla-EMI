@@ -74,7 +74,7 @@ def update_auto_map(pretrained_checkpoint: str) -> None:
     # Create timestamped backup
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_path = os.path.join(pretrained_checkpoint, f"config.json.back.{timestamp}")
-    shutil.copy2(config_path, backup_path)
+    shutil.copy2(config_path, backup_path) # 将源文件config_path复制到目标位置backup_path。
     print(f"Created backup of original config at: {os.path.abspath(backup_path)}")
 
     # Read and update the config
@@ -127,6 +127,12 @@ def _handle_file_sync(curr_filepath: str, checkpoint_filepath: str, file_type: s
         curr_filepath: Path to the current file version
         checkpoint_filepath: Path where the file should be in the checkpoint
         file_type: Description of the file type for logging
+    处理当前目录与检查点之间的文件同步。
+    如果文件存在但有差异，将创建备份，并将当前版本复制到检查点。
+    参数：
+        curr_filepath：当前文件版本的路径
+        checkpoint_filepath：文件在检查点中应处的路径
+        file_type：用于日志记录的文件类型描述
     """
     if os.path.exists(checkpoint_filepath):
         # Check if existing files are identical
@@ -259,6 +265,12 @@ def get_vla(cfg: Any) -> torch.nn.Module:
 
     Returns:
         torch.nn.Module: The initialized VLA model
+
+    从检查点加载并初始化VLA模型。
+    参数：
+        cfg:配置对象
+    返回值：
+        torch.nn.Module:初始化后的VLA模型
     """
     print("Instantiating pretrained VLA policy...")
 
@@ -267,18 +279,22 @@ def get_vla(cfg: Any) -> torch.nn.Module:
     # actually go into effect
     # If loading a pretrained checkpoint from Hugging Face Hub, we just assume that the policy
     # will be used as is, with its original modeling logic
+    # 如果加载本地存储的预训练检查点，检查配置文件或模型文件是否需要同步，
+    # 以便用户对VLA建模代码所做的任何更改能够真正生效。
+    # 如果从Hugging Face Hub加载预训练检查点，我们假设该策略将保持原样使用，
+    # 并保留其原始的建模逻辑。
     if not model_is_on_hf_hub(cfg.pretrained_checkpoint):
-        # Register OpenVLA model to HF Auto Classes (not needed if the model is on HF Hub)
+        # 将OpenVLA模型注册到HF（Hugging Face）自动类（如果模型已在Hugging Face Hub上，则无需执行此操作）。 Register OpenVLA model to HF Auto Classes (not needed if the model is on HF Hub)
         AutoConfig.register("openvla", OpenVLAConfig)
         AutoImageProcessor.register(OpenVLAConfig, PrismaticImageProcessor)
         AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
         AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
 
-        # Update config.json and sync model files
+        # 更新`config.json`并同步模型文件 Update config.json and sync model files
         update_auto_map(cfg.pretrained_checkpoint)
         check_model_logic_mismatch(cfg.pretrained_checkpoint)
 
-    # Load the model
+    # 加载模型 Load the model
     vla = AutoModelForVision2Seq.from_pretrained(
         cfg.pretrained_checkpoint,
         # attn_implementation="flash_attention_2",
@@ -289,20 +305,20 @@ def get_vla(cfg: Any) -> torch.nn.Module:
         trust_remote_code=True,
     )
 
-    # If using FiLM, wrap the vision backbone to allow for infusion of language inputs
+    # 如果使用FiLM（Feature-wise Linear Modulation），则需要对视觉主干网络进行封装，以便注入语言输入信息。 If using FiLM, wrap the vision backbone to allow for infusion of language inputs
     if cfg.use_film:
         vla = _apply_film_to_vla(vla, cfg)
 
-    # Set number of images in model input
+    # 设置模型输入中的图像数量。 Set number of images in model input
     vla.vision_backbone.set_num_images_in_input(cfg.num_images_in_input)
 
     vla.eval()
 
-    # Move model to device if not using quantization
+    # 如果未使用量化，则将模型移动到设备上。 Move model to device if not using quantization
     if not cfg.load_in_8bit and not cfg.load_in_4bit:
         vla = vla.to(DEVICE)
 
-    # Load dataset stats for action normalization
+    # 加载数据集统计信息以用于动作归一化。 Load dataset stats for action normalization
     _load_dataset_stats(vla, cfg.pretrained_checkpoint)
 
     return vla
@@ -351,6 +367,13 @@ def _apply_film_to_vla(vla: torch.nn.Module, cfg: Any) -> torch.nn.Module:
 
 def _load_dataset_stats(vla: torch.nn.Module, checkpoint_path: str) -> None:
     """
+
+    加载训练期间用于动作归一化的数据集统计信息。
+
+    参数：
+    - vla:VLA模型
+    - checkpoint_path:检查点目录的路径
+
     Load dataset statistics used during training for action normalization.
 
     Args:
@@ -358,13 +381,18 @@ def _load_dataset_stats(vla: torch.nn.Module, checkpoint_path: str) -> None:
         checkpoint_path: Path to the checkpoint directory
     """
     if model_is_on_hf_hub(checkpoint_path):
-        # Download dataset stats directly from HF Hub
+        # 直接从Hugging Face Hub下载数据集统计信息。 Download dataset stats directly from HF Hub
         dataset_statistics_path = hf_hub_download(
             repo_id=checkpoint_path,
             filename="dataset_statistics.json",
         )
     else:
         dataset_statistics_path = os.path.join(checkpoint_path, "dataset_statistics.json")
+    """
+        警告：未找到当前检查点对应的本地`dataset_statistics.json`文件。\n
+        如果您加载的是基础VLA模型（即未进行微调）的检查点，则可以忽略此警告。\n
+        否则，您在调用`predict_action()`时可能会遇到错误，因为缺少`unnorm_key`。
+    """
     if os.path.isfile(dataset_statistics_path):
         with open(dataset_statistics_path, "r") as f:
             norm_stats = json.load(f)
@@ -392,6 +420,17 @@ def get_processor(cfg: Any) -> AutoProcessor:
 
 def get_proprio_projector(cfg: Any, llm_dim: int, proprio_dim: int) -> ProprioProjector:
     """
+
+    获取VLA模型的本体感知投影器。
+
+    参数：
+    - cfg:包含模型参数的配置对象
+    - llm_dim:语言模型的维度
+    - proprio_dim:本体感知数据的维度
+
+    返回值：
+    - ProprioProjector:初始化后的本体感知投影器
+
     Get proprioception projector for the VLA model.
 
     Args:
@@ -410,7 +449,7 @@ def get_proprio_projector(cfg: Any, llm_dim: int, proprio_dim: int) -> ProprioPr
     proprio_projector = proprio_projector.to(torch.bfloat16).to(DEVICE)
     proprio_projector.eval()
 
-    # Find and load checkpoint (may be on Hugging Face Hub or stored locally)
+    # 查找并加载检查点（可能位于Hugging Face Hub或本地存储）。 Find and load checkpoint (may be on Hugging Face Hub or stored locally)
     if model_is_on_hf_hub(cfg.pretrained_checkpoint):
         model_path_to_proprio_projector_name = {
             "moojink/openvla-7b-oft-finetuned-libero-spatial": "proprio_projector--150000_checkpoint.pt",
@@ -474,6 +513,19 @@ def get_action_head(cfg: Any, llm_dim: int) -> Union[L1RegressionActionHead, Dif
 
     Raises:
         AssertionError: If both L1 regression and diffusion are specified
+    
+    获取用于连续值预测的动作头。
+
+    参数：
+    - cfg:包含模型参数的配置对象
+    - llm_dim:语言模型的维度
+
+    返回值：
+    - Union[L1RegressionActionHead, DiffusionActionHead]：初始化后的动作头
+
+    异常：
+    - AssertionError:如果同时指定了L1回归和扩散
+
     """
     assert not (cfg.use_l1_regression and cfg.use_diffusion), "Cannot use both L1 regression and diffusion action head!"
 
@@ -512,7 +564,7 @@ def get_action_head(cfg: Any, llm_dim: int) -> Union[L1RegressionActionHead, Dif
     else:
         checkpoint_path = find_checkpoint_file(cfg.pretrained_checkpoint, "action_head")
         state_dict = load_component_state_dict(checkpoint_path)
-        action_head.load_state_dict(state_dict)
+        action_head.load_state_dict(state_dict,strict=False)
 
     return action_head
 
@@ -761,9 +813,7 @@ def get_vla_action(
 
         # Process additional wrist images if any
         if all_images:
-            all_wrist_inputs = [
-                processor(prompt, image_wrist).to(DEVICE, dtype=torch.bfloat16) for image_wrist in all_images
-            ]
+            all_wrist_inputs = [processor(prompt, image_wrist).to(DEVICE, dtype=torch.bfloat16) for image_wrist in all_images]
             # Concatenate all images
             primary_pixel_values = inputs["pixel_values"]
             all_wrist_pixel_values = [wrist_inputs["pixel_values"] for wrist_inputs in all_wrist_inputs]

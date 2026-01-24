@@ -37,6 +37,12 @@ MODEL_IMAGE_SIZES = {
 
 def set_seed_everywhere(seed: int) -> None:
     """
+
+    为所有随机数生成器设置随机种子，以确保结果可复现。
+
+    参数：
+        seed:要使用的随机种子
+
     Set random seed for all random number generators for reproducibility.
 
     Args:
@@ -53,15 +59,23 @@ def set_seed_everywhere(seed: int) -> None:
 
 def get_model(cfg: Any, wrap_diffusion_policy_for_droid: bool = False) -> torch.nn.Module:
     """
+    根据配置加载并初始化用于评估的模型。
+
+    参数：
+        cfg:包含模型参数的配置对象  
+        wrap_diffusion_policy_for_droid:是否为 DROID 包装扩散策略
+    返回：
+        torch.nn.Module:已加载的模型
+    异常：
+        ValueError:如果模型家族不受支持
+
     Load and initialize model for evaluation based on configuration.
 
     Args:
         cfg: Configuration object with model parameters
         wrap_diffusion_policy_for_droid: Whether to wrap diffusion policy for DROID
-
     Returns:
         torch.nn.Module: The loaded model
-
     Raises:
         ValueError: If model family is not supported
     """
@@ -76,6 +90,21 @@ def get_model(cfg: Any, wrap_diffusion_policy_for_droid: bool = False) -> torch.
 
 def get_image_resize_size(cfg: Any) -> Union[int, tuple]:
     """
+
+    获取特定模型的图像调整尺寸。
+
+    如果返回值是整数，则调整后的图像将为正方形。
+    如果返回值是元组，则调整后的图像将为矩形。
+
+    参数：
+    - cfg:包含模型参数的配置对象
+
+    返回值：
+    - Union[int, tuple]：图像调整尺寸
+
+    异常：
+    - ValueError:如果模型家族不受支持
+
     Get image resize dimensions for a specific model.
 
     If returned value is an int, the resized image will be a square.

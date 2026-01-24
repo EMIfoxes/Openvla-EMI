@@ -3,6 +3,9 @@ datasets.py
 
 Lightweight PyTorch Dataset Definition for wrapping RLDS TFDS Pipeline; just defines transform from RLDS default
 format to OpenVLA, IterableDataset shim.
+轻量级 PyTorch 数据集定义，用于包装 RLDS TFDS 管道；
+仅定义从 RLDS 默认格式到 OpenVLA 的转换，以及可迭代数据集的适配器。
+
 """
 
 from dataclasses import dataclass
@@ -102,10 +105,16 @@ class RLDSDataset(IterableDataset):
         train: bool = True,
         image_aug: bool = False,
     ) -> None:
-        """Lightweight wrapper around RLDS TFDS Pipeline for use with PyTorch/OpenVLA Data Loaders."""
+        # cfg.data_root_dir,    # 指定数据集的根目录路径。
+        # cfg.dataset_name,     # 指定要加载的具体数据集名称。
+        # batch_transform,      # 一个用于对数据进行批处理转换的函数或对象。
+        # resize_resolution=tuple(vla.module.config.image_sizes), # 指定图像的缩放分辨率。
+        # shuffle_buffer_size=cfg.shuffle_buffer_size,  # 指定数据洗牌缓冲区的大小。
+        # image_aug=cfg.image_aug, # 指定是否启用图像增强功能。
+        """为与 PyTorch/OpenVLA 数据加载器配合使用而设计的 RLDS TFDS Pipeline 的轻量级封装。 Lightweight wrapper around RLDS TFDS Pipeline for use with PyTorch/OpenVLA Data Loaders."""
         self.data_root_dir, self.data_mix, self.batch_transform = data_root_dir, data_mix, batch_transform
 
-        # Configure RLDS Dataset(s)
+        # 配置 RLDS 数据集 Configure RLDS Dataset(s)
         if self.data_mix in OXE_NAMED_MIXTURES:
             mixture_spec = OXE_NAMED_MIXTURES[self.data_mix]
         else:
@@ -127,16 +136,17 @@ class RLDSDataset(IterableDataset):
             load_language=True,
             action_proprio_normalization_type=ACTION_PROPRIO_NORMALIZATION_TYPE,
         )
+        
         rlds_config = dict(
             traj_transform_kwargs=dict(
-                window_size=1,                                      # If we wanted to feed / predict more than one step
-                future_action_window_size=NUM_ACTIONS_CHUNK-1,      # For action chunking
-                skip_unlabeled=True,                                # Skip trajectories without language labels
-                goal_relabeling_strategy="uniform",                 # Goals are currently unused
+                window_size=1,                                      # 如果我们想要输入/预测多于一步的信息If we wanted to feed / predict more than one step
+                future_action_window_size=NUM_ACTIONS_CHUNK-1,      # 用于动作分块 For action chunking
+                skip_unlabeled=True,                                # 跳过没有语言标签的轨迹 Skip trajectories without language labels
+                goal_relabeling_strategy="uniform",                 # 目前目标未被使用 Goals are currently unused
             ),
             frame_transform_kwargs=dict(
                 resize_size=resize_resolution,
-                num_parallel_calls=16,                          # For CPU-intensive ops (decoding, resizing, etc.)
+                num_parallel_calls=16,                          # 用于 CPU 密集型操作（解码、调整大小等） For CPU-intensive ops (decoding, resizing, etc.)
             ),
             dataset_kwargs_list=per_dataset_kwargs,
             shuffle_buffer_size=shuffle_buffer_size,
@@ -147,7 +157,7 @@ class RLDSDataset(IterableDataset):
             train=train,
         )
 
-        # If applicable, enable image augmentations
+        # 如果适用，启用图像增强功能。 If applicable, enable image augmentations
         if image_aug:
             rlds_config["frame_transform_kwargs"].update({"image_augment_kwargs" : dict(
                 random_resized_crop=dict(scale=[0.9, 0.9], ratio=[1.0, 1.0]),
@@ -165,7 +175,7 @@ class RLDSDataset(IterableDataset):
             )}),
         # fmt: on
 
-        # Initialize RLDS Dataset
+        # 初始化 RLDS 数据集！！！ Initialize RLDS Dataset
         self.dataset, self.dataset_length, self.dataset_statistics = self.make_dataset(rlds_config)
 
     def make_dataset(self, rlds_config):
@@ -178,10 +188,10 @@ class RLDSDataset(IterableDataset):
     def __len__(self) -> int:
         return self.dataset_length
 
-    # === Explicitly Unused ===
+    # === Explicitly Unused 明确未使用 ===
     def __getitem__(self, idx: int) -> None:
         raise NotImplementedError("IterableDataset does not implement map-style __getitem__; see __iter__ instead!")
-
+        # “IterableDataset 没有实现映射风格的 __getitem__ 方法；请改用 __iter__！”
 
 class EpisodicRLDSDataset(RLDSDataset):
     """Returns full episodes as list of steps instead of individual transitions (useful for visualizations)."""

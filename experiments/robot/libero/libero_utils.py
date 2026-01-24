@@ -2,21 +2,16 @@
 
 import math
 import os
-
 import imageio
 import numpy as np
-import tensorflow as tf
+# import tensorflow as tf
 from libero.libero import get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
-
-from experiments.robot.robot_utils import (
-    DATE,
-    DATE_TIME,
-)
+from experiments.robot.robot_utils import DATE, DATE_TIME
 
 
 def get_libero_env(task, model_family, resolution=256):
-    """Initializes and returns the LIBERO environment, along with the task description."""
+    """ 初始化并返回 LIBERO 环境以及任务描述。Initializes and returns the LIBERO environment, along with the task description."""
     task_description = task.language
     task_bddl_file = os.path.join(get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
     env_args = {"bddl_file_name": task_bddl_file, "camera_heights": resolution, "camera_widths": resolution}

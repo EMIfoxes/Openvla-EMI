@@ -28,36 +28,18 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 
 import wandb
 
-from experiments.robot.openvla_utils import (
-    check_model_logic_mismatch,
-    model_is_on_hf_hub,
-    update_auto_map,
-)
-
+from experiments.robot.openvla_utils import check_model_logic_mismatch, model_is_on_hf_hub,update_auto_map
 from prismatic.extern.hf.configuration_prismatic import OpenVLAConfig
 from prismatic.extern.hf.modeling_prismatic import OpenVLAForActionPrediction
 from prismatic.extern.hf.processing_prismatic import PrismaticImageProcessor, PrismaticProcessor
 from prismatic.models.action_heads import DiffusionActionHead, L1RegressionActionHead
 from prismatic.models.backbones.llm.prompting import PurePromptBuilder
 from prismatic.models.film_vit_wrapper import FiLMedPrismaticVisionBackbone
-from prismatic.models.projectors import (
-    NoisyActionProjector,
-    ProprioProjector,
-)
-from prismatic.training.train_utils import (
-    compute_actions_l1_loss,
-    compute_token_accuracy,
-    get_current_action_mask,
-    get_next_actions_mask,
-)
+from prismatic.models.projectors import  NoisyActionProjector,ProprioProjector
+from prismatic.training.train_utils import compute_actions_l1_loss,compute_token_accuracy,get_current_action_mask,get_next_actions_mask
 from prismatic.util.data_utils import PaddedCollatorForActionPrediction
 from prismatic.vla.action_tokenizer import ActionTokenizer
-from prismatic.vla.constants import (
-    ACTION_DIM,
-    ACTION_PROPRIO_NORMALIZATION_TYPE,
-    NUM_ACTIONS_CHUNK,
-    PROPRIO_DIM,
-)
+from prismatic.vla.constants import ACTION_DIM,  ACTION_PROPRIO_NORMALIZATION_TYPE, NUM_ACTIONS_CHUNK, PROPRIO_DIM
 from prismatic.vla.datasets import RLDSBatchTransform, RLDSDataset
 from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
 
@@ -68,54 +50,54 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 @dataclass
 class FinetuneConfig:
     # fmt: off
-    vla_path: str = "openvla/openvla-7b"             # Path to OpenVLA model (on HuggingFace Hub or stored locally)
+    vla_path: str = "openvla/openvla-7b"             # OpenVLA 模型的路径（位于 HuggingFace Hub 或本地存储） Path to OpenVLA model (on HuggingFace Hub or stored locally)
 
-    # Dataset
-    data_root_dir: Path = Path("datasets/rlds")      # Directory containing RLDS datasets
-    dataset_name: str = "aloha_scoop_x_into_bowl"    # Name of fine-tuning dataset (e.g., `aloha_scoop_x_into_bowl`)
-    run_root_dir: Path = Path("runs")                # Path to directory to store logs & checkpoints
-    shuffle_buffer_size: int = 100_000               # Dataloader shuffle buffer size (can reduce if OOM errors occur)
+    # 数据集 Dataset
+    data_root_dir: Path = Path("datasets/rlds")      # 包含 RLDS 数据集的目录 Directory containing RLDS datasets
+    dataset_name: str = "aloha_scoop_x_into_bowl"    # 微调数据集的名称（例如 `aloha_scoop_x_into_bowl`） Name of fine-tuning dataset (e.g., `aloha_scoop_x_into_bowl`)
+    run_root_dir: Path = Path("runs")                # 用于存储日志和检查点的目录路径Path to directory to store logs & checkpoints
+    shuffle_buffer_size: int = 100_000               # 数据加载器的洗牌缓冲区大小（如果出现 OOM 错误，可以减小）Dataloader shuffle buffer size (can reduce if OOM errors occur)
 
-    # Algorithm and architecture
-    use_l1_regression: bool = True                   # If True, trains continuous action head with L1 regression objective
-    use_diffusion: bool = False                      # If True, trains continuous action head with diffusion modeling objective (DDIM)
-    num_diffusion_steps_train: int = 50              # (When `diffusion==True`) Number of diffusion steps used for training
-    use_film: bool = False                           # If True, uses FiLM to infuse language inputs into visual features
-    num_images_in_input: int = 1                     # Number of images in the VLA input (default: 1)
-    use_proprio: bool = False                        # If True, includes robot proprioceptive state in input
+    # 算法和架构 Algorithm and architecture
+    use_l1_regression: bool = True                   # 如果为 True，则使用 L1 回归目标训练连续动作头 If True, trains continuous action head with L1 regression objective
+    use_diffusion: bool = False                      # 如果为 True，则使用扩散建模目标（DDIM）训练连续动作头 If True, trains continuous action head with diffusion modeling objective (DDIM)
+    num_diffusion_steps_train: int = 50              # （当 `diffusion==True` 时）训练中使用的扩散步骤数(When `diffusion==True`) Number of diffusion steps used for training
+    use_film: bool = False                           # 如果为 True，则使用 FiLM 将语言输入注入到视觉特征中 If True, uses FiLM to infuse language inputs into visual features
+    num_images_in_input: int = 1                     # VLA 输入中的图像数量（默认：1）Number of images in the VLA input (default: 1)
+    use_proprio: bool = False                        # 如果为 True，则在输入中包含机器人的本体感知状态 If True, includes robot proprioceptive state in input
 
-    # Training configuration
-    batch_size: int = 8                              # Batch size per device (total batch size = batch_size * num GPUs)
-    learning_rate: float = 5e-4                      # Learning rate
-    lr_warmup_steps: int = 0                         # Number of steps to warm up learning rate (from 10% to 100%)
-    num_steps_before_decay: int = 100_000            # Number of steps before LR decays by 10x
-    grad_accumulation_steps: int = 1                 # Number of gradient accumulation steps
-    max_steps: int = 200_000                         # Max number of training steps
-    use_val_set: bool = False                        # If True, uses validation set and log validation metrics
-    val_freq: int = 10_000                           # (When `use_val_set==True`) Validation set logging frequency in steps
-    val_time_limit: int = 180                        # (When `use_val_set==True`) Time limit for computing validation metrics
-    save_freq: int = 10_000                          # Checkpoint saving frequency in steps
-    save_latest_checkpoint_only: bool = False        # If True, saves only 1 checkpoint, overwriting latest checkpoint
-                                                     #   (If False, saves all checkpoints)
-    resume: bool = False                             # If True, resumes from checkpoint
-    resume_step: Optional[int] = None                # (When `resume==True`) Step number that we are resuming from
-    image_aug: bool = True                           # If True, trains with image augmentations (HIGHLY RECOMMENDED)
-    diffusion_sample_freq: int = 50                  # (When `use_diffusion==True`) Frequency for sampling in steps
+    # 训练配置 Training configuration
+    batch_size: int = 8                              # 每个设备的批量大小（总批量大小 = batch_size * GPU 数量）Batch size per device (total batch size = batch_size * num GPUs)
+    learning_rate: float = 5e-4                      # 学习率 Learning rate
+    lr_warmup_steps: int = 0                         # 学习率预热的步数（从 10% 到 100%） Number of steps to warm up learning rate (from 10% to 100%)
+    num_steps_before_decay: int = 100_000            # 学习率在衰减前的步数 Number of steps before LR decays by 10x
+    grad_accumulation_steps: int = 1                 # 梯度累积步数 Number of gradient accumulation steps
+    max_steps: int = 200_000                         # 最大训练步数 Max number of training steps
+    use_val_set: bool = False                        # 如果为 True，则使用验证集并记录验证指标 If True, uses validation set and log validation metrics
+    val_freq: int = 10_000                           # （当 `use_val_set==True` 时）验证集记录频率（以步数计）(When `use_val_set==True`) Validation set logging frequency in steps
+    val_time_limit: int = 180                        # （当 `use_val_set==True` 时）计算验证指标的时间限制(When `use_val_set==True`) Time limit for computing validation metrics
+    save_freq: int = 10_000                          #  检查点保存频率（以步数计） Checkpoint saving frequency in steps
+    save_latest_checkpoint_only: bool = False        # 如果为 True，则仅保存 1 个检查点，覆盖最新检查点 If True, saves only 1 checkpoint, overwriting latest checkpoint
+                                                     # （如果为 False，则保存所有检查点）  (If False, saves all checkpoints)
+    resume: bool = False                             # 如果为 True，则从检查点恢复 If True, resumes from checkpoint
+    resume_step: Optional[int] = None                # （当 `resume==True` 时）恢复的步数 (When `resume==True`) Step number that we are resuming from
+    image_aug: bool = True                           #  如果为 True，则使用图像增强进行训练（强烈推荐） If True, trains with image augmentations (HIGHLY RECOMMENDED)
+    diffusion_sample_freq: int = 50                  # （当 `use_diffusion==True` 时）采样的频率（以步数计）(When `use_diffusion==True`) Frequency for sampling in steps
 
     # LoRA
-    use_lora: bool = True                            # If True, uses LoRA fine-tuning
-    lora_rank: int = 32                              # Rank of LoRA weight matrix
-    lora_dropout: float = 0.0                        # Dropout applied to LoRA weights
-    merge_lora_during_training: bool = True          # If True, merges LoRA weights and saves result during training
-                                                     #   Note: Merging can be very slow on some machines. If so, set to
-                                                     #         False and merge final checkpoint offline!
+    use_lora: bool = True                            # 如果为 True，则使用 LoRA 微调 If True, uses LoRA fine-tuning
+    lora_rank: int = 32                              # LoRA 权重矩阵的秩 Rank of LoRA weight matrix
+    lora_dropout: float = 0.0                        # 应用于 LoRA 权重的 dropout Dropout applied to LoRA weights
+    merge_lora_during_training: bool = True          # 如果为 True，则在训练期间合并 LoRA 权重并保存结果 If True, merges LoRA weights and saves result during training
+                                                     # 注意：在某些机器上，合并可能会非常慢。如果是这样，请设置为  Note: Merging can be very slow on some machines. If so, set to
+                                                     # False 并离线合并最终检查点！       False and merge final checkpoint offline!
 
-    # Logging
-    wandb_entity: str = "your-wandb-entity"          # Name of WandB entity
-    wandb_project: str = "your-wandb-project"        # Name of WandB project
-    run_id_note: Optional[str] = None                # Extra note to add to end of run ID for logging
-    run_id_override: Optional[str] = None            # Optional string to override the run ID with
-    wandb_log_freq: int = 10                         # WandB logging frequency in steps
+    # 日志记录 Logging
+    wandb_entity: str = "your-wandb-entity"          # WandB 实体的名称 Name of WandB entity
+    wandb_project: str = "your-wandb-project"        # WandB 项目的名称 Name of WandB project
+    run_id_note: Optional[str] = None                # 在运行 ID 的末尾添加的额外说明，用于日志记录 Extra note to add to end of run ID for logging
+    run_id_override: Optional[str] = None            # 用于覆盖运行 ID 的可选字符串 Optional string to override the run ID with
+    wandb_log_freq: int = 10                         # WandB 日志记录频率（以步数计） WandB logging frequency in steps
 
     # fmt: on
 
@@ -344,22 +326,14 @@ def run_forward_pass(
     current_action_mask = get_current_action_mask(ground_truth_token_ids)
     next_actions_mask = get_next_actions_mask(ground_truth_token_ids)
 
-    # Compute metrics for discrete action representation (next-token prediction)
+    # Compute metrics for discrete action representation (next-token prediction) 计算离散动作表示（下一个令牌预测）的指标
     if not (use_l1_regression or use_diffusion):
         loss = output.loss
         predicted_token_ids = output.logits[:, num_patches:-1].argmax(dim=2)
-        curr_action_accuracy = compute_token_accuracy(
-            predicted_token_ids, ground_truth_token_ids, mask=current_action_mask
-        )
-        curr_action_l1_loss = compute_actions_l1_loss(
-            action_tokenizer, predicted_token_ids, ground_truth_token_ids, mask=current_action_mask
-        )
-        next_actions_accuracy = compute_token_accuracy(
-            predicted_token_ids, ground_truth_token_ids, mask=next_actions_mask
-        )
-        next_actions_l1_loss = compute_actions_l1_loss(
-            action_tokenizer, predicted_token_ids, ground_truth_token_ids, mask=next_actions_mask
-        )
+        curr_action_accuracy = compute_token_accuracy(predicted_token_ids, ground_truth_token_ids, mask=current_action_mask)
+        curr_action_l1_loss = compute_actions_l1_loss(action_tokenizer, predicted_token_ids, ground_truth_token_ids, mask=current_action_mask)
+        next_actions_accuracy = compute_token_accuracy(predicted_token_ids, ground_truth_token_ids, mask=next_actions_mask)
+        next_actions_l1_loss = compute_actions_l1_loss(action_tokenizer, predicted_token_ids, ground_truth_token_ids, mask=next_actions_mask)
         metrics.update(
             {
                 "loss_value": loss.item(),  # Detached value for logging
@@ -369,7 +343,7 @@ def run_forward_pass(
                 "next_actions_l1_loss": next_actions_l1_loss.item(),
             }
         )
-    # Compute metrics for continuous action representations (L1 regression | diffusion)
+    # Compute metrics for continuous action representations (L1 regression | diffusion) 计算连续动作表示（L1回归|扩散）的指标
     else:
         # Get last layer hidden states
         last_hidden_states = output.hidden_states[-1]  # (B, seq_len, D)
@@ -383,20 +357,20 @@ def run_forward_pass(
             .to(torch.bfloat16)
         )  # (B, act_chunk_len, D)
 
-        if use_l1_regression:
+        if use_l1_regression: # 如果使用L1回归
             # Predict action
             predicted_actions = action_head.module.predict_action(actions_hidden_states)
             # Get full L1 loss
             loss = torch.nn.L1Loss()(ground_truth_actions, predicted_actions)
 
-        if use_diffusion:
+        if use_diffusion: # 如果使用扩散
             # Predict noise
             noise_pred = action_head.module.predict_noise(actions_hidden_states)
             # Get diffusion noise prediction MSE loss
             noise_pred = noise_pred.reshape(noise.shape)
             loss = nn.functional.mse_loss(noise_pred, noise, reduction="mean")
 
-            # Only sample actions and compute L1 losses if specified
+            # Only sample actions and compute L1 losses if specified （如果指定，则只采样动作并计算L1损失）
             if compute_diffusion_l1:
                 with torch.no_grad():
                     predicted_actions = run_diffusion_sampling(
@@ -421,7 +395,7 @@ def run_forward_pass(
             }
         )
 
-        # Get detailed L1 losses for logging
+        # Get detailed L1 losses for logging （获取详细的L1损失进行日志记录）
         should_log_l1_loss = not use_diffusion or (use_diffusion and compute_diffusion_l1)
         if should_log_l1_loss:
             ground_truth_curr_action = ground_truth_actions[:, 0]
@@ -765,24 +739,34 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     Returns:
         None.
+    ```
+    对基础 VLA 模型在演示数据集上进行微调，使用 LoRA(低秩适配)技术。
+
+    支持切换不同的动作表示方式(离散与连续),不同的学习目标(下一个标记预测、L1 回归、扩散建模），以及 FiLM(特征线性调制）。
+    还支持额外的模型输入，例如额外的摄像头图像和机器人的本体感知状态。假设使用动作分块实现并行动作生成。
+
+    参数：
+        cfg (FinetuneConfig)：训练配置。
+
+    返回值：
+        None.
     """
     assert cfg.use_lora, "Only LoRA fine-tuning is supported. Please set --use_lora=True!"
-    assert not (cfg.use_l1_regression and cfg.use_diffusion), (
-        "Cannot do both L1 regression and diffusion. Please pick one of them!"
-    )
-
+    assert not (cfg.use_l1_regression and cfg.use_diffusion), ("Cannot do both L1 regression and diffusion. Please pick one of them!" )
+        
     # Trim trailing forward slash ('/') in VLA path if it exists
+    # 如果存在，去除 VLA 路径末尾的正斜杠（'/'）
     cfg.vla_path = cfg.vla_path.rstrip("/")
     print(f"Fine-tuning OpenVLA Model `{cfg.vla_path}` on `{cfg.dataset_name}`")
 
-    # Get experiment run ID
+    # Get experiment run ID 获取实验运行ID
     run_id = get_run_id(cfg)
 
-    # Create experiment run directory
+    # Create experiment run directory 创建实验运行目录
     run_dir = cfg.run_root_dir / run_id
     os.makedirs(run_dir, exist_ok=True)
 
-    # GPU setup
+    # GPU setup GPU设置
     distributed_state = PartialState()
     device_id = distributed_state.local_process_index
     torch.cuda.set_device(device_id)
@@ -790,15 +774,15 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     # Initialize wandb logging
     if distributed_state.is_main_process:
-        wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=f"ft+{run_id}")
+        wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=f"ft+{run_id}",mode="offline") # 设置成离线
 
-    # Print detected constants
+    # Print detected constants 打印检测到的常量
     print(
         "Detected constants:\n"
-        f"\tNUM_ACTIONS_CHUNK: {NUM_ACTIONS_CHUNK}\n"
-        f"\tACTION_DIM: {ACTION_DIM}\n"
-        f"\tPROPRIO_DIM: {PROPRIO_DIM}\n"
-        f"\tACTION_PROPRIO_NORMALIZATION_TYPE: {ACTION_PROPRIO_NORMALIZATION_TYPE}"
+        f"\tNUM_ACTIONS_CHUNK: {NUM_ACTIONS_CHUNK}\n"   # 动作分块的数量
+        f"\tACTION_DIM: {ACTION_DIM}\n"                 # 动作维度
+        f"\tPROPRIO_DIM: {PROPRIO_DIM}\n"               # 本体感知维度
+        f"\tACTION_PROPRIO_NORMALIZATION_TYPE: {ACTION_PROPRIO_NORMALIZATION_TYPE}"  # 本体感知标准化类型
     )
 
     # Two options:
@@ -810,12 +794,20 @@ def finetune(cfg: FinetuneConfig) -> None:
     # the `modeling_prismatic.py` file in this codebase; if so, we will copy
     # the file to the downloaded or locally stored checkpoint directory so
     # that the user's changes to the VLA class logic go into effect
+    # 两种选项：
+    # (1) 基础模型在 Hugging Face Hub 上，那么下载它，并记录下载目录的路径
+    # (2) 基础模型存储在本地
+    #   - 那么在 HF 自动类中注册模型配置
+    # 在这两种情况下，我们都希望检查此代码库中的 `modeling_prismatic.py` 文件是否已进行任何更改；
+    # 如果已更改，我们将把文件复制到已下载或本地存储的检查点目录中，
+    # 以便用户的对 VLA 类逻辑的更改能够生效
     if model_is_on_hf_hub(cfg.vla_path):
-        # Download model directly from Hugging Face Hub
+        # 直接从 Hugging Face Hub 下载模型 Download model directly from Hugging Face Hub
         vla_download_path = snapshot_download(repo_id=cfg.vla_path)
-        # Overwrite VLA path
+        # 覆盖 VLA 路径 Overwrite VLA path
         cfg.vla_path = vla_download_path
     else:
+        # 将 OpenVLA 模型注册到 Hugging Face 自动类（如果模型已在 Hugging Face Hub 上，则不需要此操作）
         # Register OpenVLA model to HF Auto Classes (not needed if the model is on HF Hub)
         AutoConfig.register("openvla", OpenVLAConfig)
         AutoImageProcessor.register(OpenVLAConfig, PrismaticImageProcessor)
@@ -823,12 +815,14 @@ def finetune(cfg: FinetuneConfig) -> None:
         AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
 
     # Update config.json and sync model files
+    # 更新 `config.json` 文件并同步模型文件
     if distributed_state.is_main_process:
         update_auto_map(cfg.vla_path)
         check_model_logic_mismatch(cfg.vla_path)
 
     # Wait for model files to be synced
-    dist.barrier()
+    # 等待模型文件同步完成
+    # dist.barrier()
 
     # Load processor and VLA
     processor = AutoProcessor.from_pretrained(cfg.vla_path, trust_remote_code=True)
@@ -861,6 +855,9 @@ def finetune(cfg: FinetuneConfig) -> None:
         # Important: For this, must specify `vla.model.vision_backbone` instead of just `vla.vision_backbone`, since the
         # latter would cause the new wrapped backbone to be saved as a new attribute of `vla` instead of overwriting the
         # original one (due to the LoRA wrapper)
+        # 使用 FiLM 包装器包装视觉主干网络
+        # 注意：为此，必须指定 `vla.model.vision_backbone`，而不是仅仅指定 `vla.vision_backbone`，
+        # 因为后者会导致新包装的主干网络被保存为 `vla` 的一个新属性，而不是覆盖原始主干网络（这是由于 LoRA 包装器的原因）
         vla.model.vision_backbone = FiLMedPrismaticVisionBackbone(
             vision_backbone=vla.model.vision_backbone,
             llm_dim=vla.llm_dim,
@@ -871,10 +868,10 @@ def finetune(cfg: FinetuneConfig) -> None:
             vla.model.vision_backbone.load_state_dict(state_dict)
         vla.model.vision_backbone = vla.model.vision_backbone.to(device_id)
 
-    # Wrap VLA with DDP
+    # # 使用分布式数据并行（DDP）包装 VLA Wrap VLA with DDP
     vla = wrap_ddp(vla, device_id, find_unused=True)
 
-    # If applicable, instantiate proprio projector
+    # 如果适用，实例化本体感知投影器 If applicable, instantiate proprio projector
     if cfg.use_proprio:
         proprio_projector = init_module(
             ProprioProjector,
@@ -884,7 +881,7 @@ def finetune(cfg: FinetuneConfig) -> None:
             {"llm_dim": vla.module.llm_dim, "proprio_dim": PROPRIO_DIM},
         )
 
-    # If applicable, instantiate continuous action head for L1 regression
+    # 如果适用，为 L1 回归实例化连续动作头 If applicable, instantiate continuous action head for L1 regression
     if cfg.use_l1_regression:
         action_head = init_module(
             L1RegressionActionHead,
@@ -895,7 +892,7 @@ def finetune(cfg: FinetuneConfig) -> None:
             to_bf16=True,
         )
 
-    # If applicable, instantiate diffusion action head and noisy action projector
+    # 如果适用，实例化扩散动作头和噪声动作投影器 If applicable, instantiate diffusion action head and noisy action projector
     if cfg.use_diffusion:
         action_head = init_module(
             DiffusionActionHead,
@@ -914,15 +911,20 @@ def finetune(cfg: FinetuneConfig) -> None:
             NoisyActionProjector, "noisy_action_projector", cfg, device_id, {"llm_dim": vla.module.llm_dim}
         )
 
-    # Get number of vision patches
+    # 获取视觉块的数量 Get number of vision patches
     NUM_PATCHES = vla.module.vision_backbone.get_num_patches() * vla.module.vision_backbone.get_num_images_in_input()
+    
+    # 如果我们有本体感知输入，那么一个单独的本体感知嵌入会被附加到视觉块嵌入的末尾。
     # If we have proprio inputs, a single proprio embedding is appended to the end of the vision patch embeddings
     if cfg.use_proprio:
         NUM_PATCHES += 1
+    
+    # 对于扩散模型，一个单独的扩散时间步嵌入会被附加到视觉块嵌入的末尾。
     # For diffusion, a single diffusion timestep embedding is appended to the end of the vision patch embeddings
     if cfg.use_diffusion:
         NUM_PATCHES += 1
 
+    # 实例化优化器
     # Instantiate optimizer
     trainable_params = [param for param in vla.parameters() if param.requires_grad]
     if cfg.use_l1_regression or cfg.use_diffusion:
@@ -933,10 +935,12 @@ def finetune(cfg: FinetuneConfig) -> None:
         trainable_params += [param for param in proprio_projector.parameters() if param.requires_grad]
     print(f"# total trainable params: {sum(p.numel() for p in trainable_params)}")
     optimizer = AdamW(trainable_params, lr=cfg.learning_rate)
-
+    
+    # 记录原始学习率 
     # Record original learning rate
     original_lr = optimizer.param_groups[0]["lr"]
 
+    # 创建学习率调度器
     # Create learning rate scheduler
     scheduler = MultiStepLR(
         optimizer,
@@ -944,9 +948,24 @@ def finetune(cfg: FinetuneConfig) -> None:
         gamma=0.1,  # Multiplicative factor of learning rate decay
     )
 
+    # 创建动作分词器
     # Create Action Tokenizer
     action_tokenizer = ActionTokenizer(processor.tokenizer)
 
+    # 加载微调数据集 =>> 注意，默认情况下我们使用遵循 Open X-Embodiment 的 RLDS 格式数据集。
+    #   =>> 如果你想使用非 RLDS 数据集（例如，标准的 PyTorch 数据集），请参阅以下注释的代码块。
+    #   =>> 注意，我们的训练代码不会循环遍历多个 epoch，因为 RLDS 加载器会隐式地完成这一操作；如果你使用自己的数据集，请确保在训练循环中添加适当的逻辑！
+    #
+    # ---
+    # from prismatic.vla.datasets import DummyDataset
+    #
+    # train_dataset = DummyDataset(
+    #     action_tokenizer,
+    #     processor.tokenizer,
+    #     image_transform=processor.image_processor.apply_transform,
+    #     prompt_builder_fn=PurePromptBuilder,
+    # )
+    # ---
     # Load Fine-tuning Dataset =>> note that we use an RLDS-formatted dataset following Open X-Embodiment by default.
     #   =>> If you want to use a non-RLDS dataset (e.g., a standard PyTorch Dataset) see the following commented block.
     #   =>> Note that our training code does not loop over epochs because the RLDS loader does this implicitly; if using
@@ -963,9 +982,11 @@ def finetune(cfg: FinetuneConfig) -> None:
     # )
     # ---
 
+    # 我们假设模型的输入包括一张第三人称视角的相机图像，以及 1 到 2 张可选的手腕相机图像。
     # We assume that the model takes as input one third-person camera image and 1 or 2 optional wrist camera image(s)
     use_wrist_image = cfg.num_images_in_input > 1
 
+    # 创建训练数据集和可选的验证数据集
     # Create training and optional validation datasets
     batch_transform = RLDSBatchTransform(
         action_tokenizer,
@@ -976,12 +997,12 @@ def finetune(cfg: FinetuneConfig) -> None:
         use_proprio=cfg.use_proprio,
     )
     train_dataset = RLDSDataset(
-        cfg.data_root_dir,
-        cfg.dataset_name,
-        batch_transform,
-        resize_resolution=tuple(vla.module.config.image_sizes),
-        shuffle_buffer_size=cfg.shuffle_buffer_size,
-        image_aug=cfg.image_aug,
+        cfg.data_root_dir,    # 指定数据集的根目录路径。
+        cfg.dataset_name,     # 指定要加载的具体数据集名称。
+        batch_transform,      # 一个用于对数据进行批处理转换的函数或对象。
+        resize_resolution=tuple(vla.module.config.image_sizes), # 指定图像的缩放分辨率。
+        shuffle_buffer_size=cfg.shuffle_buffer_size,  # 指定数据洗牌缓冲区的大小。
+        image_aug=cfg.image_aug, # 指定是否启用图像增强功能。
     )
     if cfg.use_val_set:
         val_dataset = RLDSDataset(
@@ -993,21 +1014,22 @@ def finetune(cfg: FinetuneConfig) -> None:
             image_aug=cfg.image_aug,
             train=False,
         )
-
+    # [重要] 保存数据集统计信息，以便在推理时对动作进行反归一化
     # [Important] Save dataset statistics so that we can unnormalize actions during inference
     if distributed_state.is_main_process:
         save_dataset_statistics(train_dataset.dataset_statistics, run_dir)
 
+    # 创建数据整理器和数据加载器
     # Create collator and dataloader
     collator = PaddedCollatorForActionPrediction(
-        processor.tokenizer.model_max_length, processor.tokenizer.pad_token_id, padding_side="right"
-    )
+        processor.tokenizer.model_max_length, processor.tokenizer.pad_token_id, padding_side="right" )
+   
     dataloader = DataLoader(
         train_dataset,
         batch_size=cfg.batch_size,
         sampler=None,
         collate_fn=collator,
-        num_workers=0,  # Important: Set to 0 if using RLDS, which uses its own parallelism
+        num_workers=0,  # Important: Set to 0 if using RLDS, which uses its own parallelism # 重要：如果使用 RLDS，则应设置为 0，因为 RLDS 有自己的并行机制
     )
     if cfg.use_val_set:
         val_batch_size = cfg.batch_size
@@ -1018,7 +1040,8 @@ def finetune(cfg: FinetuneConfig) -> None:
             collate_fn=collator,
             num_workers=0,  # Important: Set to 0 if using RLDS, which uses its own parallelism
         )
-
+   
+    # 用于存储最近训练指标的双端队列（用于计算梯度累积的平滑指标）
     # Deque to store recent train metrics (used for computing smoothened metrics for gradient accumulation)
     recent_metrics = {
         "loss_value": deque(maxlen=cfg.grad_accumulation_steps),

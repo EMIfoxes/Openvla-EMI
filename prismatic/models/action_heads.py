@@ -40,12 +40,8 @@ class MLPResNetBlock(nn.Module):
     def __init__(self, dim):
         super().__init__()
         self.dim = dim
-        self.ffn = nn.Sequential(  # feedforward network, similar to the ones in Transformers
-            nn.LayerNorm(dim),
-            nn.Linear(dim, dim),
-            nn.ReLU(),
-        )
-
+        self.ffn = nn.Sequential(nn.LayerNorm(dim),nn.Linear(dim, dim),nn.ReLU(),)  # feedforward network, similar to the ones in Transformers
+            
     def forward(self, x):
         # x: (batch_size, hidden_dim)
         # We follow the module ordering of "Pre-Layer Normalization" feedforward networks in Transformers as
@@ -91,9 +87,7 @@ class L1RegressionActionHead(nn.Module):
     ):
         super().__init__()
         self.action_dim = action_dim
-        self.model = MLPResNet(
-            num_blocks=2, input_dim=input_dim*ACTION_DIM, hidden_dim=hidden_dim, output_dim=action_dim
-        )
+        self.model = MLPResNet(num_blocks=2, input_dim=input_dim*ACTION_DIM, hidden_dim=hidden_dim, output_dim=action_dim)
 
     def predict_action(self, actions_hidden_states):
         # actions_hidden_states: last hidden states of Transformer corresponding to action tokens in sequence

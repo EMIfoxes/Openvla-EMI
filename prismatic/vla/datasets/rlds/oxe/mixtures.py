@@ -1,6 +1,7 @@
 """
 mixtures.py
 
+定义了一个针对 Open-X Embodiment 数据集的混合数据集及其权重的注册表。每个数据集都与一个浮点数“采样权重”相关联。
 Defines a registry of dataset mixtures and weights for the Open-X Embodiment Datasets. Each dataset is associated with
 a float "sampling weight"
 """

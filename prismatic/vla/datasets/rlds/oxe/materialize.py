@@ -3,6 +3,10 @@ materialize.py
 
 Factory class for initializing Open-X Embodiment dataset kwargs and other parameters; provides and exports functions for
 clear control flow.
+
+`materialize.py`
+
+用于初始化 Open-X Embodiment 数据集的关键字参数和其他参数的工厂类；提供并导出函数以实现清晰的控制流程。
 """
 
 from copy import deepcopy
@@ -27,7 +31,7 @@ def make_oxe_dataset_kwargs(
     load_language: bool = True,
     action_proprio_normalization_type = ACTION_PROPRIO_NORMALIZATION_TYPE,
 ) -> Dict[str, Any]:
-    """Generates config (kwargs) for given dataset from Open-X Embodiment."""
+    """为给定的 Open-X Embodiment 数据集生成配置（关键字参数）。 Generates config (kwargs) for given dataset from Open-X Embodiment."""
     dataset_kwargs = deepcopy(OXE_DATASET_CONFIGS[dataset_name])
     if dataset_kwargs["action_encoding"] not in [ActionEncoding.EEF_POS, ActionEncoding.EEF_R6, ActionEncoding.JOINT_POS_BIMANUAL]:
         raise ValueError(f"Cannot load `{dataset_name}`; only EEF_POS & EEF_R6 & JOINT_POS_BIMANUAL actions supported!")
@@ -89,6 +93,20 @@ def get_oxe_dataset_kwargs_and_weights(
     action_proprio_normalization_type = ACTION_PROPRIO_NORMALIZATION_TYPE,
 ) -> Tuple[Dict[str, Any], List[float]]:
     """
+
+    # 根据给定的 Open X-Embodiment 数据集组合，生成数据集的关键字参数。返回的关键字参数（每个数据集的配置）
+    # 和权重可以直接传递给 `make_interleaved_dataset`。
+
+    :param data_root_dir: 包含 RLDS/TFDS 格式数据集（来自 Open-X)的基础目录。
+    :param mixture_spec: 来自 `oxe.mixtures.OXE_NAMED_MIXTURES` 的 (数据集名称, 采样权重) 列表。
+    :param load_camera_views: 要加载的相机视图；可用视图请参见 `oxe.dataset_configs.py`。
+    :param load_depth: 除了相机 RGB 信息外，加载深度信息。
+    :param load_proprio: 加载本体感知状态。
+    :param load_language: 加载语言指令。
+    :param action_proprio_normalization_type: 用于本体感知动作的归一化方案。
+
+    :return: 包含 (每个数据集的关键字参数, 采样权重) 的元组。
+
     Generates dataset kwargs for a given dataset mix from the Open X-Embodiment dataset. The returned kwargs
     (per-dataset configs) and weights can be passed directly to `make_interleaved_dataset`.
 
@@ -103,6 +121,7 @@ def get_oxe_dataset_kwargs_and_weights(
     return: Tuple of (per_dataset_kwargs, sampling_weights)
     """
     included_datasets, filtered_mixture_spec = set(), []
+
     for d_name, d_weight in mixture_spec:
         if d_name in included_datasets:
             overwatch.warning(f"Skipping Duplicate Dataset: `{(d_name, d_weight)}`")

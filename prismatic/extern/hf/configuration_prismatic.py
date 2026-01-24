@@ -56,11 +56,14 @@ LLM_BACKBONE_TO_HF_PATH = {
     "phi-2-3b": "microsoft/phi-2",
 }
 LLM_BACKBONE_TO_HF_METACLASS = {
-    "llama2-7b-pure": "llama", "llama2-13b-pure": "llama", "llama2-7b-chat": "llama", "llama2-13b-chat": "llama",
-    "vicuna-v15-7b": "llama", "vicuna-v15-13b": "llama",
-
-    "mistral-v0.1-7b-pure": "mistral", "mistral-v0.1-7b-instruct": "mistral",
-
+    "llama2-7b-pure": "llama", 
+    "llama2-13b-pure": "llama", 
+    "llama2-7b-chat": "llama", 
+    "llama2-13b-chat": "llama",
+    "vicuna-v15-7b": "llama", 
+    "vicuna-v15-13b": "llama",
+    "mistral-v0.1-7b-pure": "mistral", 
+    "mistral-v0.1-7b-instruct": "mistral",
     "phi-2-3b": "phi",
 }
 
@@ -131,10 +134,7 @@ class OpenVLAConfig(PrismaticConfig):
 
     def __init__(
         self,
-        norm_stats: Optional[Dict[str, Dict[str, Dict[str, Dict[str, List[float]]]]]] = None,
-        n_action_bins: int = 256,
-        **kwargs: str,
-    ) -> None:
+        norm_stats: Optional[Dict[str, Dict[str, Dict[str, Dict[str, List[float]]]]]] = None,n_action_bins: int = 256,**kwargs: str,) -> None:
         self.norm_stats, self.n_action_bins = norm_stats, n_action_bins
 
         super().__init__(**kwargs)

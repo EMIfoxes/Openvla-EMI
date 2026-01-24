@@ -4,6 +4,13 @@ modeling_prismatic.py
 Core HuggingFace-style PrismaticPreTrainedModel and PrismaticForConditionalGeneration class definitions.
 Inherits from the default `transformers.PretrainedModel`. Meant to be standalone and self-contained,
 but exactly replicate the logic in `prismatic.models.vlms.prismatic.py`.
+
+modeling_prismatic.py
+
+核心的 HuggingFace 风格的 PrismaticPreTrainedModel 和 PrismaticForConditionalGeneration 类定义。
+继承自默认的 `transformers.PretrainedModel`。设计为独立且自包含的，
+但完全复刻了 `prismatic.models.vlms.prismatic.py` 中的逻辑。
+
 """
 
 import logging

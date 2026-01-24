@@ -13,6 +13,18 @@ Evaluation
 Training
 * `vla-scripts/finetune.py`: VLA fine-tuning script
 
+**评估**
+
+- **experiments/robot/libero/**：LIBERO评估文件  
+    **run_libero_eval.py**：LIBERO评估脚本  
+    **libero_utils.py**：LIBERO评估工具  
+- **experiments/robot/**：通用评估工具文件  
+    **openvla_utils.py**：OpenVLA专用评估工具  
+    **robot_utils.py**：其他评估工具  
+
+**训练**
+
+- **vla-scripts/finetune.py**：VLA微调脚本
 
 ## Setup
 
@@ -31,6 +43,8 @@ experiments, run the command below. This will download the LIBERO-Spatial, LIBER
 and LIBERO-10 datasets in RLDS data format (~10 GB total). You can use these to fine-tune OpenVLA or
 train other methods. This step is optional since we provide pretrained OpenVLA-OFT checkpoints below.
 Note that these are the same datasets used in the original OpenVLA project. If needed, see details on how to download the original non-RLDS datasets [here](https://github.com/openvla/openvla?tab=readme-ov-file#libero-setup).
+
+（可选，如果您计划启动训练）要下载我们在微调实验中使用的LIBERO数据集，请运行以下命令。这将下载LIBERO-Spatial、LIBERO-Object、LIBERO-Goal和LIBERO-10数据集，格式为RLDS数据（总计约10 GB）。您可以使用这些数据集来微调OpenVLA或训练其他方法。由于我们在下方提供了预训练的OpenVLA-OFT检查点，因此这一步是可选的。请注意，这些数据集与原始OpenVLA项目中使用的是相同的。如果需要，可以在此处查看如何下载原始非RLDS数据集的详细信息这里。
 ```bash
 git clone git@hf.co:datasets/openvla/modified_libero_rlds
 ```
@@ -51,6 +65,20 @@ Below is the OpenVLA-OFT checkpoint trained on all four task suites combined:
 
 To start evaluations with one of the independently trained checkpoints, run one of the commands below. Each will automatically download the appropriate checkpoint listed above. You can set the `TRANSFORMERS_CACHE` and `HF_HOME` environment variable to change where the checkpoint files get cached.
 
+我们使用LoRA（r=32）和我们的OFT配方对OpenVLA在四个LIBERO任务套件上进行了微调：LIBERO-Spatial、LIBERO-Object、LIBERO-Goal和LIBERO-10（也称为LIBERO-Long）。在我们论文的最初版本中，我们为每个LIBERO任务套件独立训练了一个检查点。在论文的更新版本中，我们进行了一个额外的实验，即在所有四个任务套件的组合上训练了一个单一策略（该实验的结果可在附录的附加实验部分找到）。总体而言，任务特定策略和组合策略的结果是相当的：分别为97.1%和96.8%的平均成功率。
+
+以下是针对LIBERO独立训练的四个OpenVLA-OFT检查点：
+
+- moojink/openvla-7b-oft-finetuned-libero-spatial  
+- moojink/openvla-7b-oft-finetuned-libero-object  
+- moojink/openvla-7b-oft-finetuned-libero-goal  
+- moojink/openvla-7b-oft-finetuned-libero-10  
+
+以下是针对所有四个任务套件组合训练的OpenVLA-OFT检查点：
+
+- moojink/openvla-7b-oft-finetuned-libero-spatial-object-goal-10  
+
+要使用其中一个独立训练的检查点开始评估，请运行以下命令之一。每个命令将自动下载上述列出的相应检查点。您可以通过设置`TRANSFORMERS_CACHE`和`HF_HOME`环境变量来更改检查点文件的缓存位置。
 ```bash
 # Launch LIBERO-Spatial evals
 python experiments/robot/libero/run_libero_eval.py \
@@ -89,12 +117,23 @@ Notes:
   Note that results may vary slightly if you use a different GPU than the A100. If the discrepancy is large,
   please post a GitHub issue, and we will look into it.
 
+要评估在所有四个任务套件上一起训练的策略，只需将上述命令中的`--pretrained_checkpoint`替换为`moojink/openvla-7b-oft-finetuned-libero-spatial-object-goal-10`即可。
+
+注意事项：
+
+- 评估脚本默认会运行500次试验（10个任务 × 每个任务50个剧集）。您可以通过设置`--num_trials_per_task`来修改每个任务的试验次数。您还可以通过`--seed`更改随机种子。脚本中还有其他参数，我们已将其设置为与上述OpenVLA-OFT检查点兼容的默认值。
+- **注意**：设置`--center_crop True`非常重要，因为我们在训练时对OpenVLA进行了随机裁剪增强（我们在每个训练样本中随机裁剪了90%的区域，因此在测试时我们只需取中心90%的裁剪区域）。
+- 评估脚本会在本地记录结果。您还可以通过设置`--use_wandb True`并将结果记录到Weights & Biases中，同时指定`--wandb_project <PROJECT>`和`--wandb_entity <ENTITY>`。
+- 我们在论文中报告的结果是使用Python 3.10.14、PyTorch 2.2.0以及我们在NVIDIA A100 GPU上的自定义`transformers` v4.40.1版本获得的，并且是基于三个随机种子的平均值。如果可能，请尽量使用这些软件包版本。请注意，如果您使用的GPU不是A100，结果可能会略有不同。如果差异较大，请在GitHub上发布问题，我们将进行调查。
 ## Fine-Tuning on LIBERO Datasets
 
 First, download the LIBERO datasets as mentioned above in the Setup section above: `libero_spatial_no_noops`, `libero_object_no_noops`, `libero_goal_no_noops`, `libero_10_no_noops`. (`"_no_noops"` stands for no no-op actions, i.e., training samples with near-zero actions are filtered out).
 
 Then, launch the fine-tuning script with the OFT configuration below, replacing `X` in the first line with the number of GPUs. The command below launches fine-tuning on LIBERO-Spatial with the hyperparameters that we used in our paper. Here, batch size 8 per GPU will require ~62 GB VRAM, and batch size 1 per GPU will require ~25 GB VRAM.
 
+首先，按照上述“设置”部分提到的，下载LIBERO数据集：`libero_spatial_no_noops`、`libero_object_no_noops`、`libero_goal_no_noops`、`libero_10_no_noops`。（“_no_noops”表示没有无操作动作，即过滤掉了动作接近于零的训练样本）。
+
+然后，使用以下OFT配置启动微调脚本，将第一行中的X替换为GPU的数量。以下命令将使用我们在论文中使用的超参数启动对LIBERO-Spatial的微调。在这里，每个GPU的批量大小为8将需要约62 GB的显存，而每个GPU的批量大小为1将需要约25 GB的显存。
 ```bash
 torchrun --standalone --nnodes 1 --nproc-per-node X vla-scripts/finetune.py \
   --vla_path openvla/openvla-7b \
@@ -128,3 +167,13 @@ In general, we recommend fine-tuning until training L1 loss goes below 0.01 and 
 Please be sure to test your policy with the same device/GPU used to train it! Otherwise, performance may drop substantially. You may be able to avoid the performance drop if you merge the LoRA weights into the base model on the downstream device used for testing (e.g., if you train on H100 and then merge on A100 before testing on A100). You can see our script [vla-scripts/merge_lora_weights_and_save.py](vla-scripts/merge_lora_weights_and_save.py) for merging the LoRA adapter into the base model offline. It's okay if you already merged LoRA weights into the base OpenVLA model during fine-tuning; you can always redownload the base model and merge again as long as you still have the LoRA adapter (`merge_lora_weights_and_save.py` will handle this for you).
 
 If you run into any issues, please open a new GitHub issue. If you do not receive a response within 2 business days, please email Moo Jin Kim (moojink@cs.stanford.edu) to bring the issue to his attention.
+
+如果X = 8，并且在150K步的检查点上进行评估，上述训练命令应该能够复现我们的OpenVLA-OFT结果。
+
+你可以将`libero_spatial_no_noops`替换为`libero_object_no_noops`、`libero_goal_no_noops`或`libero_10_no_noops`。你也可以修改其他参数——例如，如果你想只使用第三人称摄像头的一个输入图像，并禁用本体状态输入，你可以设置`--num_images_in_input 1`和`--use_proprio False`。
+
+一般来说，我们建议微调直到训练的L1损失降到0.01以下并开始趋于平稳（使用上述配置，它应该在150K梯度步后，在LIBERO-Spatial上达到约0.006的L1损失，并在100K步后将学习率降低10倍）。然而，对于LIBERO-Goal，我们发现50K检查点（其L1损失约为0.02）出于某种未知原因表现最好。对于所有其他任务套件，我们发现150K检查点表现最好。
+
+请务必使用与训练时相同的设备/GPU来测试你的策略！否则，性能可能会大幅下降。如果你在下游设备上将LoRA权重合并到基础模型中（例如，如果你在H100上训练，然后在A100上合并，再在A100上进行测试），你或许可以避免性能下降。你可以查看我们的脚本`vla-scripts/merge_lora_weights_and_save.py`，用于离线将LoRA适配器合并到基础模型中。如果你已经在微调期间将LoRA权重合并到了基础OpenVLA模型中，没关系；只要你仍然有LoRA适配器，你可以随时重新下载基础模型并再次合并（`merge_lora_weights_and_save.py`会为你处理这个问题）。
+
+如果你遇到任何问题，请新建一个GitHub问题。如果你在2个工作日内没有收到回复，请通过电子邮件联系Moo Jin Kim（moojink@cs.stanford.edu），以引起他的注意。
