@@ -924,6 +924,7 @@ def finetune(cfg: FinetuneConfig) -> None:
     # Create Action Tokenizer
     action_tokenizer = ActionTokenizer(processor.tokenizer)
 
+    """
     # 加载微调数据集 =>> 注意，默认情况下我们使用遵循 Open X-Embodiment 的 RLDS 格式数据集。
     #   =>> 如果你想使用非 RLDS 数据集（例如，标准的 PyTorch 数据集），请参阅以下注释的代码块。
     #   =>> 注意，我们的训练代码不会循环遍历多个 epoch，因为 RLDS 加载器会隐式地完成这一操作；如果你使用自己的数据集，请确保在训练循环中添加适当的逻辑！
@@ -953,7 +954,8 @@ def finetune(cfg: FinetuneConfig) -> None:
     #     prompt_builder_fn=PurePromptBuilder,
     # )
     # ---
-
+    """
+    
     # 我们假设模型的输入包括一张第三人称视角的相机图像，以及 1 到 2 张可选的手腕相机图像。
     # We assume that the model takes as input one third-person camera image and 1 or 2 optional wrist camera image(s)
     use_wrist_image = cfg.num_images_in_input > 1
