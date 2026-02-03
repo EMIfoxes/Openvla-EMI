@@ -3,6 +3,9 @@ datasets.py
 
 Lightweight PyTorch Dataset Definition for wrapping RLDS TFDS Pipeline; just defines transform from RLDS default
 format to OpenVLA, IterableDataset shim.
+轻量级 PyTorch 数据集定义，用于包装 RLDS TFDS 管道；
+仅定义从 RLDS 默认格式到 OpenVLA 的转换，以及可迭代数据集的适配器。
+
 """
 
 from dataclasses import dataclass
@@ -19,13 +22,9 @@ from prismatic.models.backbones.llm.prompting import PromptBuilder
 from prismatic.models.backbones.vision import ImageTransform
 from prismatic.util.data_utils import tree_map
 from prismatic.vla.action_tokenizer import ActionTokenizer
+from prismatic.vla.constants import ACTION_DIM, ACTION_PROPRIO_NORMALIZATION_TYPE, ACTION_TOKEN_BEGIN_IDX, IGNORE_INDEX, NUM_ACTIONS_CHUNK, PROPRIO_DIM, STOP_INDEX
 from prismatic.vla.datasets.rlds import make_interleaved_dataset, make_single_dataset
 from prismatic.vla.datasets.rlds.oxe import OXE_NAMED_MIXTURES, get_oxe_dataset_kwargs_and_weights
-from prismatic.vla.datasets.rlds.utils.data_utils import NormalizationType
-
-# HuggingFace Default / LLaMa-2 IGNORE_INDEX (for labels)
-IGNORE_INDEX = -100
-
 
 @dataclass
 class RLDSBatchTransform:
@@ -34,18 +33,31 @@ class RLDSBatchTransform:
     image_transform: ImageTransform
     prompt_builder_fn: Type[PromptBuilder]
     predict_stop_token: bool = True
+    use_wrist_image: bool = False
+    use_proprio: bool = False
 
     def __call__(self, rlds_batch: Dict[str, Any]) -> Dict[str, Any]:
         """Converts a RLDS batch to the format expected by the OpenVLA collator/models."""
-        dataset_name, action = rlds_batch["dataset_name"], rlds_batch["action"][0]
+        dataset_name, current_action = rlds_batch["dataset_name"], rlds_batch["action"][0]
         img = Image.fromarray(rlds_batch["observation"]["image_primary"][0])
         lang = rlds_batch["task"]["language_instruction"].decode().lower()
+        actions = rlds_batch["action"]
 
         # Construct Chat-based Prompt =>> Input is default query + language instruction, output are the action tokens
         prompt_builder = self.prompt_builder_fn("openvla")
+
+        # Get future action chunk
+        future_actions = rlds_batch["action"][1:]
+        future_actions_string = ''.join(self.action_tokenizer(future_actions))
+
+        # Get action chunk string
+        current_action_string = self.action_tokenizer(current_action)
+        action_chunk_string = current_action_string + future_actions_string
+        action_chunk_len = len(action_chunk_string)
+
         conversation = [
             {"from": "human", "value": f"What action should the robot take to {lang}?"},
-            {"from": "gpt", "value": self.action_tokenizer(action)},
+            {"from": "gpt", "value": action_chunk_string},
         ]
         for turn in conversation:
             prompt_builder.add_turn(turn["from"], turn["value"])
@@ -60,11 +72,26 @@ class RLDSBatchTransform:
         pixel_values = self.image_transform(img)
 
         # [CRITICAL] We do not want to take the loss for anything but the predicted action tokens!
-        labels[: -(len(action) + 1)] = IGNORE_INDEX
+        labels[: -(action_chunk_len + 1)] = IGNORE_INDEX
         if not self.predict_stop_token:
             labels[-1] = IGNORE_INDEX
 
-        return dict(pixel_values=pixel_values, input_ids=input_ids, labels=labels, dataset_name=dataset_name)
+        return_dict = dict(pixel_values=pixel_values, input_ids=input_ids, labels=labels, dataset_name=dataset_name, actions=actions)
+
+        # Add additional inputs
+        if self.use_wrist_image:
+            all_wrist_pixels = []
+            for k in rlds_batch["observation"].keys():
+                if "wrist" in k:
+                    img_wrist = Image.fromarray(rlds_batch["observation"][k][0])
+                    pixel_values_wrist = self.image_transform(img_wrist)
+                    all_wrist_pixels.append(pixel_values_wrist)
+            return_dict["pixel_values_wrist"] = torch.cat(all_wrist_pixels, dim=0)
+        if self.use_proprio and "proprio" in rlds_batch["observation"]:
+            proprio = rlds_batch["observation"]["proprio"]
+            return_dict["proprio"] = proprio
+
+        return return_dict
 
 
 class RLDSDataset(IterableDataset):
@@ -78,10 +105,16 @@ class RLDSDataset(IterableDataset):
         train: bool = True,
         image_aug: bool = False,
     ) -> None:
-        """Lightweight wrapper around RLDS TFDS Pipeline for use with PyTorch/OpenVLA Data Loaders."""
+        # cfg.data_root_dir,    # 指定数据集的根目录路径。
+        # cfg.dataset_name,     # 指定要加载的具体数据集名称。
+        # batch_transform,      # 一个用于对数据进行批处理转换的函数或对象。
+        # resize_resolution=tuple(vla.module.config.image_sizes), # 指定图像的缩放分辨率。
+        # shuffle_buffer_size=cfg.shuffle_buffer_size,  # 指定数据洗牌缓冲区的大小。
+        # image_aug=cfg.image_aug, # 指定是否启用图像增强功能。
+        """为与 PyTorch/OpenVLA 数据加载器配合使用而设计的 RLDS TFDS Pipeline 的轻量级封装。 Lightweight wrapper around RLDS TFDS Pipeline for use with PyTorch/OpenVLA Data Loaders."""
         self.data_root_dir, self.data_mix, self.batch_transform = data_root_dir, data_mix, batch_transform
 
-        # Configure RLDS Dataset(s)
+        # 配置 RLDS 数据集 Configure RLDS Dataset(s)
         if self.data_mix in OXE_NAMED_MIXTURES:
             mixture_spec = OXE_NAMED_MIXTURES[self.data_mix]
         else:
@@ -89,25 +122,31 @@ class RLDSDataset(IterableDataset):
             mixture_spec = [(self.data_mix, 1.0)]
 
         # fmt: off
+        if "aloha" in self.data_mix:
+            load_camera_views = ("primary", "left_wrist", "right_wrist")
+        else:
+            load_camera_views = ("primary", "wrist")
+
         per_dataset_kwargs, weights = get_oxe_dataset_kwargs_and_weights(
             self.data_root_dir,
             mixture_spec,
-            load_camera_views=("primary",),
+            load_camera_views=load_camera_views,
             load_depth=False,
-            load_proprio=False,
+            load_proprio=True,
             load_language=True,
-            action_proprio_normalization_type=NormalizationType.BOUNDS_Q99,
+            action_proprio_normalization_type=ACTION_PROPRIO_NORMALIZATION_TYPE,
         )
+        
         rlds_config = dict(
             traj_transform_kwargs=dict(
-                window_size=1,                                      # If we wanted to feed / predict more than one step
-                future_action_window_size=0,                        # For action chunking
-                skip_unlabeled=True,                                # Skip trajectories without language labels
-                goal_relabeling_strategy="uniform",                 # Goals are currently unused
+                window_size=1,                                      # 如果我们想要输入/预测多于一步的信息If we wanted to feed / predict more than one step
+                future_action_window_size=NUM_ACTIONS_CHUNK-1,      # 用于动作分块 For action chunking
+                skip_unlabeled=True,                                # 跳过没有语言标签的轨迹 Skip trajectories without language labels
+                goal_relabeling_strategy="uniform",                 # 目前目标未被使用 Goals are currently unused
             ),
             frame_transform_kwargs=dict(
                 resize_size=resize_resolution,
-                num_parallel_calls=16,                          # For CPU-intensive ops (decoding, resizing, etc.)
+                num_parallel_calls=16,                          # 用于 CPU 密集型操作（解码、调整大小等） For CPU-intensive ops (decoding, resizing, etc.)
             ),
             dataset_kwargs_list=per_dataset_kwargs,
             shuffle_buffer_size=shuffle_buffer_size,
@@ -118,7 +157,7 @@ class RLDSDataset(IterableDataset):
             train=train,
         )
 
-        # If applicable, enable image augmentations
+        # 如果适用，启用图像增强功能。 If applicable, enable image augmentations
         if image_aug:
             rlds_config["frame_transform_kwargs"].update({"image_augment_kwargs" : dict(
                 random_resized_crop=dict(scale=[0.9, 0.9], ratio=[1.0, 1.0]),
@@ -136,7 +175,7 @@ class RLDSDataset(IterableDataset):
             )}),
         # fmt: on
 
-        # Initialize RLDS Dataset
+        # 初始化 RLDS 数据集！！！ Initialize RLDS Dataset
         self.dataset, self.dataset_length, self.dataset_statistics = self.make_dataset(rlds_config)
 
     def make_dataset(self, rlds_config):
@@ -149,10 +188,10 @@ class RLDSDataset(IterableDataset):
     def __len__(self) -> int:
         return self.dataset_length
 
-    # === Explicitly Unused ===
+    # === Explicitly Unused 明确未使用 ===
     def __getitem__(self, idx: int) -> None:
         raise NotImplementedError("IterableDataset does not implement map-style __getitem__; see __iter__ instead!")
-
+        # “IterableDataset 没有实现映射风格的 __getitem__ 方法；请改用 __iter__！”
 
 class EpisodicRLDSDataset(RLDSDataset):
     """Returns full episodes as list of steps instead of individual transitions (useful for visualizations)."""

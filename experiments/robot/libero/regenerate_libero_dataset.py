@@ -1,64 +1,37 @@
 """
-Regenerates a LIBERO dataset (HDF5 files) by replaying demonstrations in the environments.
+通过在环境中重放演示来重新生成LIBERO数据集(HDF5文件)。
 
-Notes:
-    - We save image observations at 256x256px resolution (instead of 128x128).
-    - We filter out transitions with "no-op" (zero) actions that do not change the robot's state.
-    - We filter out unsuccessful demonstrations.
-    - In the LIBERO HDF5 data -> RLDS data conversion (not shown here), we rotate the images by
-    180 degrees because we observe that the environments return images that are upside down
-    on our platform.
-
-Usage:
-    python experiments/robot/libero/regenerate_libero_dataset.py \
-        --libero_task_suite [ libero_spatial | libero_object | libero_goal | libero_10 ] \
-        --libero_raw_data_dir <PATH TO RAW HDF5 DATASET DIR> \
-        --libero_target_dir <PATH TO TARGET DIR>
-
-    Example (LIBERO-Spatial):
-        python experiments/robot/libero/regenerate_libero_dataset.py \
-            --libero_task_suite libero_spatial \
-            --libero_raw_data_dir ./LIBERO/libero/datasets/libero_spatial \
-            --libero_target_dir ./LIBERO/libero/datasets/libero_spatial_no_noops
-            
-重新生成 LIBERO 数据集（HDF5 文件）的方法是在环境中回放演示数据。
 注意事项：
-我们将图像观测保存为 256×256 像素的分辨率（而非 128×128）。
-我们会过滤掉包含“无操作”（零）动作且未改变机器人状态的转移。
-我们会过滤掉不成功的演示。
-在将 LIBERO HDF5 数据转换为 RLDS 数据时（此处未展示），我们会将图像旋转 180 度，因为我们观察到在我们的平台上，环境返回的图像是上下颠倒的。
-用法：
-复制
-python experiments/robot/libero/regenerate_libero_dataset.py \
-    --libero_task_suite [ libero_spatial | libero_object | libero_goal | libero_10 ] \
-    --libero_raw_data_dir <原始 HDF5 数据集目录路径> \
-    --libero_target_dir <目标目录路径>
-示例（LIBERO-Spatial）：
-复制
-python experiments/robot/libero/regenerate_libero_dataset.py \
-    --libero_task_suite libero_spatial \
-    --libero_raw_data_dir ./LIBERO/libero/datasets/libero_spatial \
-    --libero_target_dir ./LIBERO/libero/datasets/libero_spatial_no_noops
-"""
+    - 我们以256x256像素分辨率保存图像观测数据(而不是128x128)。
+    - 我们过滤掉“无操作”（零）动作的转换，这些动作不会改变机器人的状态。
+    - 我们过滤掉不成功的演示。
+    - 在LIBERO HDF5数据转换为RLDS数据的过程中(此处未显示),我们将图像旋转180度,因为我们观察到环境返回的图像在我们的平台上是上下颠倒的。
 
+用法：
+    python experiments/robot/libero/regenerate_libero_dataset.py \
+        --libero_task_suite [libero_spatial | libero_object | libero_goal | libero_10] \
+        --libero_raw_data_dir <原始HDF5数据集目录的路径> \
+        --libero_target_dir <目标目录的路径>
+
+示例(LIBERO-Spatial):
+    python experiments/robot/libero/regenerate_libero_dataset.py \
+        --libero_task_suite libero_spatial \
+        --libero_raw_data_dir ./LIBERO/libero/datasets/libero_spatial \
+        --libero_target_dir ./LIBERO/libero/datasets/libero_spatial_no_noops
+
+"""
+import sys
+sys.path.append('/media/lxx/Elements/project/openvla-oft/LIBERO')
 import argparse
 import json
 import os
-import time
-
 import h5py
 import numpy as np
 import robosuite.utils.transform_utils as T
 import tqdm
 from libero.libero import benchmark
-
-from experiments.robot.libero.libero_utils import (
-    get_libero_dummy_action,
-    get_libero_env,
-)
-
-
-IMAGE_RESOLUTION = 256
+from experiments.robot.libero.libero_utils import get_libero_dummy_action, get_libero_env
+# export MUJOCO_GL=osmesa      
 
 
 def is_noop(action, prev_action=None, threshold=1e-4):
@@ -74,6 +47,16 @@ def is_noop(action, prev_action=None, threshold=1e-4):
         remove actions where the robot is staying still but opening/closing its gripper.
         So you also need to consider the current state (by checking the previous timestep's
         gripper action as a proxy) to determine whether the action really is a no-op.
+
+    返回一个动作是否为无操作(no-op)动作。
+
+    无操作动作满足以下两个标准：
+        (1) 除了最后一个维度（夹爪动作）之外，所有动作维度的值都接近于零。
+        (2) 夹爪动作与前一个时间步的夹爪动作相同。
+
+    关于 (2) 的解释：
+        仅使用标准 (1) 来过滤动作是不够的，因为这样会移除机器人静止但正在打开或关闭夹爪的动作。
+        因此，还需要考虑当前状态（通过检查前一个时间步的夹爪动作作为代理），以确定该动作是否真的为无操作。
     """
     # Special case: Previous action is None if this is the first action in the episode
     # Then we only care about criterion (1)
@@ -84,7 +67,6 @@ def is_noop(action, prev_action=None, threshold=1e-4):
     gripper_action = action[-1]
     prev_gripper_action = prev_action[-1]
     return np.linalg.norm(action[:-1]) < threshold and gripper_action == prev_gripper_action
-
 
 def main(args):
     print(f"Regenerating {args.libero_task_suite} dataset!")
@@ -101,22 +83,26 @@ def main(args):
     metainfo_json_out_path = f"./experiments/robot/libero/{args.libero_task_suite}_metainfo.json"
     with open(metainfo_json_out_path, "w") as f:
         # Just test that we can write to this file (we overwrite it later)
-        json.dump(metainfo_json_dict, f)
+        json.dump(metainfo_json_dict, f) # 把 Python 字典 metainfo_json_dict 序列化成 JSON 字符串，并直接写入文件对象 f 中
 
     # Get task suite
     benchmark_dict = benchmark.get_benchmark_dict()
-    task_suite = benchmark_dict[args.libero_task_suite]()
-    num_tasks_in_suite = task_suite.n_tasks
+    task_suite = benchmark_dict[args.libero_task_suite]() # 任务套件
+    num_tasks_in_suite = task_suite.n_tasks               # 任务套件中的任务数量
+
+    ##############
+    # num_tasks_in_suite = 2    # 只转换两个任务
+    ##############
 
     # Setup
     num_replays = 0
     num_success = 0
     num_noops = 0
-
+    
     for task_id in tqdm.tqdm(range(num_tasks_in_suite)):
         # Get task in suite
         task = task_suite.get_task(task_id)
-        env, task_description = get_libero_env(task, "llava", resolution=IMAGE_RESOLUTION)
+        env, task_description = get_libero_env(task, "llava", resolution=args.image_resolution)
 
         # Get dataset for task
         orig_data_path = os.path.join(args.libero_raw_data_dir, f"{task.name}_demo.hdf5")
@@ -152,8 +138,10 @@ def main(args):
             eye_in_hand_images = []
 
             # Replay original demo actions in environment and record observations
+            # 重放原始演示动作，并记录观察结果
             for _, action in enumerate(orig_actions):
                 # Skip transitions with no-op actions
+                # 跳过无操作动作的过渡
                 prev_action = actions[-1] if len(actions) > 0 else None
                 if is_noop(action, prev_action):
                     print(f"\tSkipping no-op action: {action}")
@@ -168,9 +156,7 @@ def main(args):
                 else:
                     # For all other timesteps, get state from environment and record it
                     states.append(env.sim.get_state().flatten())
-                    robot_states.append(
-                        np.concatenate([obs["robot0_gripper_qpos"], obs["robot0_eef_pos"], obs["robot0_eef_quat"]])
-                    )
+                    robot_states.append(np.concatenate([obs["robot0_gripper_qpos"], obs["robot0_eef_pos"], obs["robot0_eef_quat"]]))
 
                 # Record original action (from demo)
                 actions.append(action)
@@ -179,14 +165,7 @@ def main(args):
                 if "robot0_gripper_qpos" in obs:
                     gripper_states.append(obs["robot0_gripper_qpos"])
                 joint_states.append(obs["robot0_joint_pos"])
-                ee_states.append(
-                    np.hstack(
-                        (
-                            obs["robot0_eef_pos"],
-                            T.quat2axisangle(obs["robot0_eef_quat"]),
-                        )
-                    )
-                )
+                ee_states.append(np.hstack((obs["robot0_eef_pos"],T.quat2axisangle(obs["robot0_eef_quat"]),)))
                 agentview_images.append(obs["agentview_image"])
                 eye_in_hand_images.append(obs["robot0_eye_in_hand_image"])
 
@@ -194,6 +173,7 @@ def main(args):
                 obs, reward, done, info = env.step(action.tolist())
 
             # At end of episode, save replayed trajectories to new HDF5 files (only keep successes)
+            # 在演示结束时，将重放轨迹保存到新的 HDF5 文件中（仅保留成功）
             if done:
                 dones = np.zeros(len(actions)).astype(np.uint8)
                 dones[-1] = 1
@@ -221,6 +201,7 @@ def main(args):
             num_replays += 1
 
             # Record success/false and initial environment state in metainfo dict
+            # 记录成功/失败和初始环境状态
             task_key = task_description.replace(" ", "_")
             episode_key = f"demo_{i}"
             if task_key not in metainfo_json_dict:
@@ -236,12 +217,10 @@ def main(args):
                 json.dump(metainfo_json_dict, f, indent=2)
 
             # Count total number of successful replays so far
-            print(
-                f"Total # episodes replayed: {num_replays}, Total # successes: {num_success} ({num_success / num_replays * 100:.1f} %)"
-            )
+            print(f"Total # episodes replayed: {num_replays}, Total # successes: {num_success} ({num_success / num_replays * 100:.1f} %)")
 
             # Report total number of no-op actions filtered out so far
-            print(f"  Total # no-op actions filtered out: {num_noops}")
+            print(f"Total # no-op actions filtered out: {num_noops}")
 
         # Close HDF5 files
         orig_data_file.close()
@@ -251,16 +230,16 @@ def main(args):
     print(f"Dataset regeneration complete! Saved new dataset at: {args.libero_target_dir}")
     print(f"Saved metainfo JSON at: {metainfo_json_out_path}")
 
-
 if __name__ == "__main__":
     # Parse command-line arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--libero_task_suite", type=str, choices=["libero_spatial", "libero_object", "libero_goal", "libero_10", "libero_90"],
-                        help="LIBERO task suite. Example: libero_spatial", required=True)
-    parser.add_argument("--libero_raw_data_dir", type=str,
-                        help="Path to directory containing raw HDF5 dataset. Example: ./LIBERO/libero/datasets/libero_spatial", required=True)
-    parser.add_argument("--libero_target_dir", type=str,
-                        help="Path to regenerated dataset directory. Example: ./LIBERO/libero/datasets/libero_spatial_no_noops", required=True)
+    parser.add_argument("--libero_task_suite", type=str, default='libero_object',choices=["libero_spatial", "libero_object", "libero_goal", "libero_10", "libero_90"],
+                        help="LIBERO task suite. Example: libero_spatial", )
+    parser.add_argument("--libero_raw_data_dir", type=str,default='/media/lxx/Elements/project/openvla-oft/LIBERO/libero/datasets/libero_object',
+                        help="Path to directory containing raw HDF5 dataset. Example: ./LIBERO/libero/datasets/libero_spatial", )
+    parser.add_argument("--libero_target_dir", type=str,default='/media/lxx/Elements/project/openvla-oft/datasets/libero_object_no_noops',
+                        help="Path to regenerated dataset directory. Example: ./LIBERO/libero/datasets/libero_spatial_no_noops", )
+    parser.add_argument("--image_resolution", type=int, default=256)
     args = parser.parse_args()
 
     # Start data regeneration

@@ -11,9 +11,7 @@ from transformers import PreTrainedTokenizerBase
 
 
 class ActionTokenizer:
-    def __init__(
-        self, tokenizer: PreTrainedTokenizerBase, bins: int = 256, min_action: int = -1, max_action: int = 1
-    ) -> None:
+    def __init__(self, tokenizer: PreTrainedTokenizerBase, bins: int = 256, min_action: int = -1, max_action: int = 1) -> None:
         """
         Discretizes continuous robot actions into N bins per dimension and maps to the least used tokens.
 

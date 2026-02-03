@@ -1,6 +1,6 @@
 """
 dataset.py
-
+用于配置和初始化 RLDS 数据集的核心接口脚本。
 Core interface script for configuring and initializing RLDS datasets.
 """
 
@@ -16,22 +16,16 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 
 from prismatic.overwatch import initialize_overwatch
+from prismatic.vla.constants import ACTION_DIM, ACTION_PROPRIO_NORMALIZATION_TYPE, ACTION_TOKEN_BEGIN_IDX, IGNORE_INDEX, NUM_ACTIONS_CHUNK, PROPRIO_DIM, STOP_INDEX
 from prismatic.vla.datasets.rlds import obs_transforms, traj_transforms
 from prismatic.vla.datasets.rlds.utils import goal_relabeling, task_augmentation
-from prismatic.vla.datasets.rlds.utils.data_utils import (
-    NormalizationType,
-    allocate_threads,
-    get_dataset_statistics,
-    normalize_action_and_proprio,
-    pprint_data_mixture,
-    tree_map,
-)
+from prismatic.vla.datasets.rlds.utils.data_utils import allocate_threads, get_dataset_statistics, normalize_action_and_proprio, pprint_data_mixture, tree_map
 
-# Initialize Overwatch =>> Wraps `logging.Logger`
+# 初始化监视器（Overwatch）=>> 封装了 logging.Logger Initialize Overwatch =>> Wraps `logging.Logger`
 overwatch = initialize_overwatch(__name__)
 
 
-# Configure Tensorflow with *no GPU devices* (to prevent clobber with PyTorch)
+# 配置 TensorFlow 以使用*无 GPU 设备*（以防止与 PyTorch 冲突）。 Configure Tensorflow with *no GPU devices* (to prevent clobber with PyTorch)
 tf.config.set_visible_devices([], "GPU")
 
 
@@ -47,7 +41,7 @@ def make_dataset_from_rlds(
     depth_obs_keys: Dict[str, Optional[str]] = {},
     state_obs_keys: List[Optional[str]] = (),
     language_key: Optional[str] = None,
-    action_proprio_normalization_type: NormalizationType = NormalizationType.NORMAL,
+    action_proprio_normalization_type: ACTION_PROPRIO_NORMALIZATION_TYPE,
     dataset_statistics: Optional[Union[dict, str]] = None,
     absolute_action_mask: Optional[List[bool]] = None,
     action_normalization_mask: Optional[List[bool]] = None,
@@ -55,6 +49,56 @@ def make_dataset_from_rlds(
     num_parallel_calls: int = tf.data.AUTOTUNE,
 ) -> Tuple[dl.DLataset, dict]:
     """
+
+    此函数负责从存储中加载特定的 RLDS 数据集，并将其转换为标准化格式。生成一个包含轨迹的数据集。不包括 CPU 密集型操作。
+
+    如果提供了 `standardize_fn`，则会将其应用于每个轨迹。此函数应将轨迹转换为标准格式，其中包括 "observation" 和 "action" 两个键。"observation" 键应是一个字典，包含一些额外的键，这些键将根据 `*_obs_keys` 参数提取为更标准的格式。
+
+    `image_obs_keys` 和 `depth_obs_keys` 参数是从新名称到旧名称的映射，或者在旧名称的位置用 None 替换以插入填充。例如，如果在 `standardize_fn` 处理后，"observation" 字典中包含名为 "workspace" 和 "wrist" 的 RGB 图像，并且 `image_obs_keys={"primary": "workspace", "secondary": None, "wrist": "wrist"}`，那么生成的数据集将包含一个 "observation" 字典，其中包含 "image_primary"、"image_secondary" 和 "image_wrist" 这些键，其中 "image_primary" 对应于 "workspace"，"image_secondary" 是一个填充图像，而 "image_wrist" 对应于 "wrist"。
+
+    `state_obs_keys` 是一个一维本体感知键的列表，这些键将被提取自 "observation" 字典，拼接成一个单一数组，并映射到 "observation" 字典中的 "proprio" 键。对于每个 None 条目，将插入一个单一的填充元素（零）。
+
+    数据集还将包含一个 "task" 字典。如果提供了 `language_key`，则 "task" 字典将包含 "language_instruction" 键，从 `traj[language_key]` 中提取。
+
+    参数：
+        name (str): RLDS 数据集的名称（通常是 "name" 或 "name:version"）。
+        data_dir (str): 数据目录的路径。
+        train (bool): 是否使用训练集或验证集。
+        shuffle (bool, 可选): 是否打乱文件读取顺序（不会完全打乱数据集，因为一个文件通常包含许多轨迹）！
+        standardize_fn (Callable[[dict], dict], 可选): 如果提供，这将是应用于每个轨迹的第一个函数。
+        image_obs_keys (Mapping[str, str|None]): 从 {新名称: 旧名称} 的映射，表示从 "observation" 字典中提取哪些 RGB 图像。
+            `new_obs = {f"image_{new}": old_obs[old] for new, old in image_obs_keys.items()}`。
+            如果 `old` 的值为 None，则插入一个填充图像（空字符串）。
+        depth_obs_keys (Mapping[str, str|None]): 与 `image_obs_keys` 相同，但用于深度图像。键将以前缀 "depth_" 而不是 "image_" 开始。
+        state_obs_keys (Sequence[str|None]): 从 "observation" 字典中提取的一维本体感知键的列表，拼接后映射到 "proprio"。
+            对于每个 None 条目，插入一个单一的填充元素。
+        language_key (str, 可选): 如果提供，"task" 字典将包含 "language_instruction" 键，从 `traj[language_key]` 中提取。
+        action_proprio_normalization_type (str, 可选): 对动作、本体感知或两者执行的归一化类型。
+            可以是 "normal"（均值为 0，标准差为 1）或 "bounds"（归一化到 [-1, 1]）。
+        dataset_statistics (dict|str, 可选): 包含数据集统计信息的字典（或 JSON 文件路径），用于归一化。
+            如果 `action_proprio_normalization_type` 是 "normal"，则应包含 "mean" 和 "std" 键。
+            如果是 "bounds"，则应包含 "min" 和 "max" 键。还可以提供 "num_transitions" 和 "num_trajectories" 键以供下游使用（例如，在 `make_interleaved_dataset` 中）。
+            如果未提供，则会即时计算统计信息。
+        absolute_action_mask (Sequence[bool], 可选): 默认情况下，所有动作维度都被认为是相对的。
+            这在 `future_action_window_size > 0` 时很重要：从轨迹末尾（或使用目标重标记时的目标时间步）之外采取的动作需要被设置为“中性”，以表示任务已完成。
+            对于相对动作，“中性”意味着零，但对于绝对动作，“中性”意味着重复最后一个有效动作。如果提供此掩码，则指示哪些动作维度是绝对的。
+        action_normalization_mask (Sequence[bool], 可选): 如果提供，指示哪些动作维度应被归一化。
+            例如，如果某个动作维度始终恰好为 0 或 1，则可能不想对其进行归一化。默认情况下，所有动作维度都被归一化。
+        num_parallel_reads (int): 并行读取工作线程的数量。默认为 AUTOTUNE。
+        num_parallel_calls (int): 并行调用的数量，用于轨迹映射操作。默认为 AUTOTUNE。
+
+    返回值：
+        包含轨迹的数据集，其中每个步骤具有以下字段：
+        - observation:
+            - image_{name1, name2, ...} # RGB 图像观测
+            - depth_{name1, name2, ...} # 深度图像观测
+            - proprio                   # 一维本体感知观测数组
+            - timestep                  # 每帧的时间步
+        - task:
+            - language_instruction      # 语言指令，如果提供了 `language_key` 则存在
+        - action                        # 动作向量
+        - dataset_name                  # 数据集名称
+
     This function is responsible for loading a specific RLDS dataset from storage and getting it into a standardized
     format. Yields a dataset of trajectories. Does not include CPU-intensive operations.
 
@@ -231,10 +275,7 @@ def make_dataset_from_rlds(
         dataset_statistics["action"]["mask"] = np.array(action_normalization_mask)
 
     # construct the dataset
-    if "val" not in builder.info.splits:
-        split = "train[:95%]" if train else "train[95%:]"
-    else:
-        split = "train" if train else "val"
+    split = "train" if train else "val"
 
     dataset = dl.DLataset.from_rlds(builder, split=split, shuffle=shuffle, num_parallel_reads=num_parallel_reads)
 
@@ -453,7 +494,7 @@ def make_single_dataset(
     return dataset, dataset_statistics["num_trajectories"], dataset_statistics
 
 
-# === Core Initializer ===
+# === 核心初始化器 Core Initializer === 创建交错数据集
 def make_interleaved_dataset(
     dataset_kwargs_list: List[Dict],
     sample_weights: Optional[List[float]] = None,
@@ -467,7 +508,46 @@ def make_interleaved_dataset(
     traj_transform_threads: Optional[int] = None,
     traj_read_threads: Optional[int] = None,
 ) -> dl.DLataset:
+    # rlds_config = dict(
+    # traj_transform_kwargs=dict(
+    #     window_size=1,                                      # 如果我们想要输入/预测多于一步的信息If we wanted to feed / predict more than one step
+    #     future_action_window_size=NUM_ACTIONS_CHUNK-1,      # 用于动作分块 For action chunking
+    #     skip_unlabeled=True,                                # 跳过没有语言标签的轨迹 Skip trajectories without language labels
+    #     goal_relabeling_strategy="uniform",                 # 目前目标未被使用 Goals are currently unused
+    # ),
+    # frame_transform_kwargs=dict(
+    #     resize_size=resize_resolution,
+    #     num_parallel_calls=16,                              # 用于 CPU 密集型操作（解码、调整大小等） For CPU-intensive ops (decoding, resizing, etc.)
+    # ),
+    # dataset_kwargs_list=per_dataset_kwargs,
+    # shuffle_buffer_size=shuffle_buffer_size,
+    # sample_weights=weights,
+    # balance_weights=True,
+    # traj_transform_threads=len(mixture_spec),
+    # traj_read_threads=len(mixture_spec),
+    # train=train,)
     """
+
+    从数据集配置列表(kwargs)创建一个交错数据集。返回一个批处理帧的数据集。
+
+    Args:
+        dataset_kwargs_list: kwargs 列表，每个元素都传递给 `make_dataset_from_rlds`。
+            其中的 "num_parallel_calls" 和 "num_parallel_reads" 分别使用 `traj_transform_threads` 和`traj_read_threads` 覆盖。
+        sample_weights: 列表中每个数据集的采样。权重如果为 None,则默认为均匀分布。
+        train: 是否为训练数据集或验证数据集。
+        shuffle_buffer_size: 数据集洗牌缓冲区的大小（以帧数计）。
+        traj_transform_kwargs: 传递给 `apply_trajectory_transforms` 的 kwargs。
+            其中的 "num_parallel_calls" 使用 `traj_transform_threads` 覆盖。
+        frame_transform_kwargs: 传递给 `apply_frame_transforms` 的 kwargs。
+        batch_size: 批量大小。如果未提供，则输出不进行批处理。
+        balance_weights: 如果为 True,则采样权重会乘以每个数据集中的帧数。
+            这样，如果所有采样权重相等，那么对交错数据集进行一次完整迭代将对应于对每个单独数据集进行一次完整迭代
+            （仅在期望上成立，因为实际上采样是随机的）。
+        traj_transform_threads: 轨迹变换的并行调用总数，根据采样权重在各数据集之间分配。
+            如果为 None,则每个数据集默认为 AUTOTUNE。
+        traj_read_threads: 轨迹变换的并行读取工作线程总数，根据采样权重在各数据集之间分配。
+            如果为 None,则每个数据集默认为 AUTOTUNE。
+
     Creates an interleaved dataset from list of dataset configs (kwargs). Returns a dataset of batched frames.
 
     Args:
@@ -490,18 +570,18 @@ def make_interleaved_dataset(
         traj_read_threads: total number of parallel read workers for trajectory transforms, distributed across
             datasets according to their sampling weights. If None, defaults to AUTOTUNE for every dataset.
     """
-    # Default to uniform sampling (if `sample_weights` is not specified)
+    # 如果未指定 `sample_weights`，则默认采用均匀采样。 Default to uniform sampling (if `sample_weights` is not specified)
     if not sample_weights:
         sample_weights = [1.0] * len(dataset_kwargs_list)
 
     if len(sample_weights) != len(dataset_kwargs_list):
         raise ValueError(f"sample_weights must be None or have length {len(dataset_kwargs_list)}.")
 
-    # Check valid `traj_transform_kwargs` and `frame_transform_kwargs`
+    # 检查有效的 `traj_transform_kwargs` 和 `frame_transform_kwargs`。 Check valid `traj_transform_kwargs` and `frame_transform_kwargs`
     if (traj_transform_kwargs is None) or (frame_transform_kwargs is None):
         raise ValueError("Missing `traj_transform_kwargs` and `frame_transform_kwargs`!")
 
-    # Get Dataset Sizes
+    # 获取数据集大小 Get Dataset Sizes
     dataset_sizes, all_dataset_statistics = [], {}
     for dataset_kwargs in dataset_kwargs_list:
         data_kwargs = copy.deepcopy(dataset_kwargs)
@@ -511,10 +591,10 @@ def make_interleaved_dataset(
         dataset_sizes.append(dataset_statistics["num_transitions"])
         all_dataset_statistics[dataset_kwargs["name"]] = dataset_statistics
 
-    # Get the indices of the "primary" datasets (i.e., datasets with sample_weight == 1.0)
+    # 获取“主要”数据集（即采样权重为 1.0 的数据集）的索引。 Get the indices of the "primary" datasets (i.e., datasets with sample_weight == 1.0)
     primary_dataset_indices = np.array([idx for idx in range(len(sample_weights)) if sample_weights[idx] == 1.0])
 
-    # Balance and Normalize Weights
+    # 平衡和归一化权重 Balance and Normalize Weights
     if balance_weights:
         sample_weights = np.array(sample_weights) * np.array(dataset_sizes)
     sample_weights = np.array(sample_weights) / np.sum(sample_weights)
@@ -522,16 +602,18 @@ def make_interleaved_dataset(
 
     # Effective Dataset Length = Number of samples until each dataset has completed at least one epoch
     #   =>> Note :: Only counting the "primary" datasets (i.e., datasets with sample_weight == 1.0)
+    # 有效数据集长度 = 每个数据集完成至少一个周期所需的样本数量
+    #   =>> 注意 :: 仅计算“主要”数据集（即采样权重为 1.0 的数据集）
     dataset_len = int((np.array(dataset_sizes) / sample_weights)[primary_dataset_indices].max())
 
-    # Allocate Threads based on Weights
+    # 根据权重分配线程 Allocate Threads based on Weights
     threads_per_dataset = allocate_threads(traj_transform_threads, sample_weights)
     reads_per_dataset = allocate_threads(traj_read_threads, sample_weights)
 
     overwatch.info("Threads per Dataset: %s", threads_per_dataset)
     overwatch.info("Reads per Dataset: %s", reads_per_dataset)
 
-    # Construct Datasets
+    # 构建数据集 Construct Datasets
     overwatch.info("Constructing datasets...")
     datasets = []
     for dataset_kwargs, threads, reads in zip(
@@ -560,15 +642,18 @@ def make_interleaved_dataset(
         dataset = apply_per_dataset_frame_transforms(dataset, **dataset_frame_transform_kwargs)
         datasets.append(dataset)
 
-    # Interleave at the Frame Level
+    # 在帧级别交错 Interleave at the Frame Level
     dataset: dl.DLataset = dl.DLataset.sample_from_datasets(datasets, sample_weights)
 
+    # 验证集 =>> 固定一个数据的洗牌缓冲区并将其缓存在 RAM 中；防止内存逐渐增加！
     # Validation =>> fix a single shuffle buffer of data and cache it in RAM; prevents gradual memory increase!
     if not train:
         dataset = dataset.take(shuffle_buffer_size).cache()
 
     # Shuffle the Dataset
     #   =>> IMPORTANT :: Shuffle AFTER .cache(), or else memory will still leak!
+    # 洗牌数据集
+    #   =>> 重要提示 :: 必须在调用 .cache() 之后进行洗牌，否则内存仍然会泄漏！
     dataset = dataset.shuffle(shuffle_buffer_size)
 
     # Apply Frame Transforms

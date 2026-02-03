@@ -1,13 +1,3 @@
-"""
-deploy.py
-
-Starts VLA server which the client can query to get robot actions.
-
-deploy.py
-
-启动VLA服务器,客户端可以查询该服务器以获取机器人的动作。
-"""
-
 import os.path
 
 # ruff: noqa: E402
@@ -126,7 +116,7 @@ class DeployConfig:
     num_diffusion_steps_train: int = 50              # (When `diffusion==True`) Number of diffusion steps used for training
     num_diffusion_steps_inference: int = 50          # (When `diffusion==True`) Number of diffusion steps used for inference
     use_film: bool = False                           # 如果为 True，则使用 FiLM（Feature-wise Linear Modulation）将语言输入注入到视觉特征中。 If True, uses FiLM to infuse language inputs into visual features
-    num_images_in_input: int = 3                     # VLA 输入中的图像数量，默认为 3。 Number of images in the VLA input (default: 3)
+    num_images_in_input: int = 1                     # VLA 输入中的图像数量，默认为 3。 Number of images in the VLA input (default: 3)
     use_proprio: bool = True                         # 是否在输入中包含本体感知状态。 Whether to include proprio state in input
 
     center_crop: bool = True                         # 是否进行中心裁剪（如果训练时使用了随机裁剪的图像增强）。 Center crop? (if trained w/ random crop image aug)

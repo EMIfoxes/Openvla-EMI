@@ -205,9 +205,7 @@ class PrismaticProcessor(ProcessorMixin):
         @return: BatchFeature with keys for `input_ids`, `attention_mask` and `pixel_values`.
         """
         pixel_values = self.image_processor(images, return_tensors=return_tensors)["pixel_values"]
-        text_inputs = self.tokenizer(
-            text, return_tensors=return_tensors, padding=padding, truncation=truncation, max_length=max_length
-        )
+        text_inputs = self.tokenizer(text, return_tensors=return_tensors, padding=padding, truncation=truncation, max_length=max_length)
 
         # [Validate] Need same number of images and text inputs!
         if pixel_values.shape[0] != text_inputs.input_ids.shape[0]:
