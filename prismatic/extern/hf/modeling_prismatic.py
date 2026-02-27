@@ -344,9 +344,7 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
             )
 
         # Instantiate PrismaticVisionBackbone (w/ Potential Fused Backbone)
-        self.vision_backbone = PrismaticVisionBackbone(
-            config.use_fused_vision_backbone, config.image_sizes, config.timm_model_ids, config.timm_override_act_layers
-        )
+        self.vision_backbone = PrismaticVisionBackbone(config.use_fused_vision_backbone, config.image_sizes, config.timm_model_ids, config.timm_override_act_layers)
 
         # Create Multimodal Projector
         self.projector = PrismaticProjector(
@@ -476,15 +474,11 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
             )
 
         # Build multimodal embeddings & attention mask; insert embeddings after <BOS> token (1:)
-        multimodal_embeddings = torch.cat(
-            [input_embeddings[:, :1, :], projected_patch_embeddings, input_embeddings[:, 1:, :]], dim=1
-        )
+        multimodal_embeddings = torch.cat([input_embeddings[:, :1, :], projected_patch_embeddings, input_embeddings[:, 1:, :]], dim=1)
 
         multimodal_attention_mask = None
         if attention_mask is not None:
-            multimodal_attention_mask = torch.cat(
-                [attention_mask[:, :1], projected_patch_attention_mask, attention_mask[:, 1:]], dim=1
-            )
+            multimodal_attention_mask = torch.cat([attention_mask[:, :1], projected_patch_attention_mask, attention_mask[:, 1:]], dim=1)
 
         return multimodal_embeddings, multimodal_attention_mask
 
@@ -581,24 +575,18 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
             all_actions_mask = self._process_action_masks(labels)
 
             # Extract the language portion of the input embeddings (i.e. remove the action tokens portion)
-            language_embeddings = input_embeddings[~all_actions_mask].reshape(
-                input_embeddings.shape[0], -1, input_embeddings.shape[2]
-            )  # (B, lang_seq_len, llm_dim)
+            language_embeddings = input_embeddings[~all_actions_mask].reshape(input_embeddings.shape[0], -1, input_embeddings.shape[2])  # (B, lang_seq_len, llm_dim)
 
             # Get visual features
             projected_patch_embeddings = self._process_vision_features(pixel_values, language_embeddings, use_film)
 
             # Add proprioceptive state if provided
-            projected_patch_embeddings = self._process_proprio_features(
-                projected_patch_embeddings, proprio, proprio_projector
-            )
+            projected_patch_embeddings = self._process_proprio_features(projected_patch_embeddings, proprio, proprio_projector)
 
             # [Diffusion] Add diffusion timestep embedding if provided
             if diffusion_timestep_embeddings is not None:
                 # For simplicity, just append diffusion timestep embedding to the end of projected vision patch tokens
-                projected_patch_embeddings = torch.cat(
-                    (projected_patch_embeddings, diffusion_timestep_embeddings), dim=1
-                )
+                projected_patch_embeddings = torch.cat((projected_patch_embeddings, diffusion_timestep_embeddings), dim=1)
 
             # Process action embeddings
             if noisy_actions is not None:
@@ -624,9 +612,7 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
                 input_embeddings = input_embeddings * ~all_actions_mask
 
             # Build multimodal embeddings & attention mask
-            multimodal_embeddings, multimodal_attention_mask = self._build_multimodal_attention(
-                input_embeddings, projected_patch_embeddings, attention_mask
-            )
+            multimodal_embeddings, multimodal_attention_mask = self._build_multimodal_attention(input_embeddings, projected_patch_embeddings, attention_mask)
 
             # Build labels for multimodal sequence if needed
             multimodal_labels = self._build_multimodal_labels(labels, projected_patch_embeddings)

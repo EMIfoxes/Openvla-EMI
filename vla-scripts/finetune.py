@@ -374,27 +374,23 @@ def run_forward_pass(
                         use_film=use_film,
                     )
 
+    metrics.update({"loss_value": loss.item(),} ) # Detached value for logging
+        
+    # Get detailed L1 losses for logging （获取详细的L1损失进行日志记录）
+    should_log_l1_loss = not use_diffusion or (use_diffusion and compute_diffusion_l1)
+    if should_log_l1_loss:
+        ground_truth_curr_action = ground_truth_actions[:, 0]
+        predicted_curr_action = predicted_actions[:, 0]
+        ground_truth_next_actions = ground_truth_actions[:, 1:]
+        predicted_next_actions = predicted_actions[:, 1:]
+        curr_action_l1_loss = torch.nn.L1Loss()(ground_truth_curr_action, predicted_curr_action)
+        next_actions_l1_loss = torch.nn.L1Loss()(ground_truth_next_actions, predicted_next_actions)
         metrics.update(
             {
-                "loss_value": loss.item(),  # Detached value for logging
+                "curr_action_l1_loss": curr_action_l1_loss.item(),
+                "next_actions_l1_loss": next_actions_l1_loss.item(),
             }
         )
-
-        # Get detailed L1 losses for logging （获取详细的L1损失进行日志记录）
-        should_log_l1_loss = not use_diffusion or (use_diffusion and compute_diffusion_l1)
-        if should_log_l1_loss:
-            ground_truth_curr_action = ground_truth_actions[:, 0]
-            predicted_curr_action = predicted_actions[:, 0]
-            ground_truth_next_actions = ground_truth_actions[:, 1:]
-            predicted_next_actions = predicted_actions[:, 1:]
-            curr_action_l1_loss = torch.nn.L1Loss()(ground_truth_curr_action, predicted_curr_action)
-            next_actions_l1_loss = torch.nn.L1Loss()(ground_truth_next_actions, predicted_next_actions)
-            metrics.update(
-                {
-                    "curr_action_l1_loss": curr_action_l1_loss.item(),
-                    "next_actions_l1_loss": next_actions_l1_loss.item(),
-                }
-            )
 
     # Return both the loss tensor (with gradients) and the metrics dictionary (with detached values)
     return loss, metrics
