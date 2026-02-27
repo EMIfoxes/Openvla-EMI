@@ -40,7 +40,7 @@ class MLPResNetBlock(nn.Module):
     def __init__(self, dim):
         super().__init__()
         self.dim = dim
-        self.ffn = nn.Sequential(nn.LayerNorm(dim),nn.Linear(dim, dim),nn.ReLU(),)  # feedforward network, similar to the ones in Transformers
+        self.ffn = nn.Sequential(nn.LayerNorm(dim),nn.Linear(dim, dim),nn.ReLU())  # feedforward network, similar to the ones in Transformers
             
     def forward(self, x):
         # x: (batch_size, hidden_dim)
